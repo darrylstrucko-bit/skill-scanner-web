@@ -82,12 +82,14 @@ export default function Home() {
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editsByLine, setEditsByLine] = useState<Record<number, string>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  // "checking": waiting on the initial /api/warm response. "cold": remote scanner
-  // confirmed asleep, counting down an estimate of its wake time — Scan stays
-  // disabled meanwhile so a click can't land mid-wakeup and hit the timeout.
-  // "warm": either confirmed awake, or there's no remote scanner at all (local dev).
+  // "checking": waiting on the first /api/warm response. "cold": remote scanner
+  // confirmed asleep — Scan stays disabled and we keep re-polling /api/warm until
+  // it actually reports ready, rather than guessing a fixed wake time and
+  // re-enabling on a timer (a guess that was wrong: enabling at a fixed T+60s
+  // doesn't mean Render is actually done waking up yet). "warm": confirmed
+  // awake, or there's no remote scanner at all (local dev).
   const [warmupState, setWarmupState] = useState<"checking" | "cold" | "warm">("checking");
-  const [warmupRemaining, setWarmupRemaining] = useState(60);
+  const [warmupElapsed, setWarmupElapsed] = useState(0);
 
   const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -95,35 +97,48 @@ export default function Home() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   // Start waking the Render-hosted scanner as early as possible instead of
-  // waiting for the user's first Scan click, and surface whether it's actually
-  // awake yet.
+  // waiting for the user's first Scan click, and keep checking until it's
+  // actually confirmed ready — not just "probably ready by now."
   useEffect(() => {
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout>;
     const pingStartedAt = Date.now();
-    fetch("/api/warm")
-      .then((res) => res.json())
-      .then((data) => {
+
+    async function checkWarm() {
+      try {
+        const res = await fetch("/api/warm");
+        const data = await res.json();
+        if (cancelled) return;
+
         if (!data.remote || data.warmed) {
           setWarmupState("warm");
           return;
         }
-        const alreadyElapsed = Math.floor((Date.now() - pingStartedAt) / 1000);
-        setWarmupRemaining(Math.max(0, 60 - alreadyElapsed));
+
+        const elapsed = Math.floor((Date.now() - pingStartedAt) / 1000);
+        setWarmupElapsed(elapsed);
         setWarmupState("cold");
-      })
-      .catch(() => setWarmupState("warm")); // can't tell — don't block on a guess
+
+        // Give up waiting after a while and let them try anyway — the scan's own
+        // 90s timeout and elapsed-time indicator take over from there.
+        if (elapsed < 90) {
+          pollTimer = setTimeout(checkWarm, 4000);
+        } else {
+          setWarmupState("warm");
+        }
+      } catch {
+        if (!cancelled) setWarmupState("warm"); // can't tell — don't block on a guess
+      }
+    }
+
+    checkWarm();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollTimer);
+    };
   }, []);
 
-  // Count the estimate down to zero, then stop — once it reaches zero we treat it
-  // as "probably ready" (see isWarmingUp below) without needing another state
-  // transition here; if it's genuinely still cold, the scan's own elapsed-time
-  // indicator and 90s timeout take over from there.
-  useEffect(() => {
-    if (warmupState !== "cold" || warmupRemaining <= 0) return;
-    const t = setTimeout(() => setWarmupRemaining((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [warmupState, warmupRemaining]);
-
-  const isWarmingUp = warmupState === "cold" && warmupRemaining > 0;
+  const isWarmingUp = warmupState === "cold";
 
   // Fallback for while a scan is actually in flight (covers both the cold-start
   // case below and any other reason a scan runs long) — a visible counter instead
@@ -336,13 +351,14 @@ export default function Home() {
           </button>
           {isWarmingUp && (
             <span className="text-xs text-zinc-500 dark:text-zinc-500">
-              Scanner is waking up from idle — ready in ~{warmupRemaining}s
+              Scanner is waking up from idle — {warmupElapsed}s so far (usually under a
+              minute)
             </span>
           )}
           {loading && elapsedSeconds >= 8 && (
             <span className="text-xs text-zinc-500 dark:text-zinc-500">
-              Taking a while — the scanner may be waking up from idle (can take up to
-              ~60s).
+              Taking a while — the scanner may still be waking up from idle (can take
+              up to ~2 minutes in rare cases).
             </span>
           )}
 

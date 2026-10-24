@@ -92,13 +92,15 @@ async function scanRemote(files: Record<string, string>, apiUrl: string): Promis
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(zipBuffer)], { type: "application/zip" }), "skill.zip");
 
-  // Render's free tier spins a service down after 15 minutes idle and takes up to
-  // ~60s to wake it back up on the next request (per Render's own docs) — a 30s
-  // timeout here would abort mid-wakeup on exactly the requests that need it most.
+  // Render's free tier spins a service down after 15 minutes idle and takes "about
+  // a minute" to wake it back up (per Render's own docs) — but that's not a hard
+  // ceiling, and the actual scan still has to run after it wakes. 90s wasn't
+  // enough in practice; giving real margin above the documented estimate rather
+  // than cutting it close.
   const res = await fetch(`${apiUrl.replace(/\/$/, "")}/scan-upload`, {
     method: "POST",
     body: form,
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(120_000),
   });
   const text = await res.text();
   if (!res.ok) {
