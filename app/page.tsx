@@ -432,8 +432,9 @@ export default function Home() {
               Skill Scanner
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Choose a skill file and run it through the Skill Scanner to check for
-              malicious patterns to prevent prompt injection and data exfiltration.
+              Choose a skill file and run it through the Skill Scanner to detect
+              malicious patterns and prevent prompt injection and data exfiltration.
+              <br />
               Review findings and edit using this interface.
             </p>
           </div>
