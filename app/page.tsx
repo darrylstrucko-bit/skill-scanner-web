@@ -15,6 +15,7 @@ type Finding = {
   resolved_file: string | null;
   line_number: number | null;
   reported_line_number: number | null;
+  line_inferred: boolean;
   remediation: string | null;
 };
 
@@ -124,7 +125,7 @@ export default function Home() {
       }
       setCustomSkills((prev) => [...prev, { id: data.skillId, label: `${data.label} (uploaded)` }]);
       setSelected(data.skillId);
-      await runScan(data.skillId);
+      setResult(null); // don't show stale results from whatever was scanned before
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -149,6 +150,13 @@ export default function Home() {
       if (!res.ok) {
         throw new Error(data.detail || data.error || "Save failed");
       }
+      // Show the edit immediately instead of the stale pre-edit content while the
+      // rescan is in flight — runScan clears editingFile right away, which would
+      // otherwise flash the old (still-flagged) text back into the read-only view.
+      const savedFile = editingFile;
+      setResult((prev) =>
+        prev ? { ...prev, files: { ...prev.files, [savedFile]: content } } : prev
+      );
       await runScan(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -260,7 +268,7 @@ export default function Home() {
           <button
             onClick={() => runScan(selected)}
             disabled={loading}
-            className="rounded bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
+            className="rounded bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 active:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200 dark:active:bg-zinc-300"
           >
             {loading ? "Scanning..." : "Scan"}
           </button>
@@ -273,9 +281,9 @@ export default function Home() {
               accept=".md,.py,.js,.ts,.json,.yaml,.yml,.txt,.sh"
               onChange={handleUpload}
               disabled={uploading}
-              className="text-xs text-zinc-600 file:mr-2 file:rounded file:border-0 file:bg-zinc-200 file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-zinc-400 dark:file:bg-zinc-800 dark:file:text-zinc-100"
+              className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
             />
-            {uploading && <span className="text-xs text-zinc-500">Uploading &amp; scanning...</span>}
+            {uploading && <span className="text-xs text-zinc-500">Uploading...</span>}
           </div>
 
           {result && (
@@ -336,13 +344,13 @@ export default function Home() {
                         <div className="flex gap-2">
                           <button
                             onClick={saveEdit}
-                            className="rounded bg-black px-2 py-1 text-xs font-medium text-white dark:bg-zinc-50 dark:text-black"
+                            className="rounded bg-black px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-800 active:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200 dark:active:bg-zinc-300"
                           >
                             Save &amp; rescan
                           </button>
                           <button
                             onClick={() => setEditingFile(null)}
-                            className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
                           >
                             Cancel
                           </button>
@@ -353,7 +361,7 @@ export default function Home() {
                             setEditingFile(file);
                             setEditsByLine({});
                           }}
-                          className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
+                          className="rounded border border-zinc-300 px-2 py-1 text-xs transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
                         >
                           Edit
                         </button>
@@ -366,7 +374,9 @@ export default function Home() {
                           <button
                             key={f.id}
                             onClick={() => selectFinding(f)}
-                            className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs ${SEVERITY_LINE_BG[f.severity]}`}
+                            className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:brightness-95 active:brightness-90 dark:hover:brightness-110 dark:active:brightness-125 ${
+                              SEVERITY_LINE_BG[f.severity]
+                            } ${selectedFindingId === f.id ? "ring-2 ring-inset ring-black dark:ring-white" : ""}`}
                           >
                             <span className={`rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
                               {f.severity}
@@ -441,7 +451,7 @@ export default function Home() {
                     findingRefs.current[f.id] = el;
                   }}
                   onClick={() => selectFinding(f)}
-                  className={`cursor-pointer rounded border bg-white p-4 dark:bg-zinc-900 ${
+                  className={`cursor-pointer rounded border bg-white p-4 transition-colors hover:bg-zinc-50 active:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:active:bg-zinc-700 ${
                     selectedFindingId === f.id
                       ? "border-black dark:border-white"
                       : "border-zinc-200 dark:border-zinc-800"
@@ -468,6 +478,11 @@ export default function Home() {
                             text match)
                           </span>
                         )}
+                      {f.line_inferred && (
+                        <span className="ml-1 text-amber-600 dark:text-amber-500">
+                          (location inferred from related code)
+                        </span>
+                      )}
                     </p>
                   )}
                   {f.remediation && (

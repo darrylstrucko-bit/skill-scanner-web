@@ -2,7 +2,13 @@ import { execFile } from "child_process";
 import path from "path";
 import { NextResponse } from "next/server";
 import { resolveSkillDir, isKnownSkill, uploadLabel, skillFileOverride } from "@/lib/skillRegistry";
-import { readSkillFiles, normalizeKey, correctLineForSnippet } from "@/lib/skillFiles";
+import {
+  readSkillFiles,
+  normalizeKey,
+  correctLineForSnippet,
+  inferLineFromFlow,
+  NETWORK_LIBRARY_PATTERN,
+} from "@/lib/skillFiles";
 
 // Phase 1: trusted local samples plus locally-uploaded folders (see /api/upload).
 // Still no network-facing exposure and no real sandboxing — that's phase 2.
@@ -60,10 +66,12 @@ export async function POST(request: Request) {
       byNormalizedKey.set(normalizeKey(relPath), relPath);
     }
 
+    type CandidateFlow = { sink_path?: string; source_path?: string; sink_class?: string };
     type RawFinding = {
       file_path?: string | null;
       line_number?: number | null;
       snippet?: string | null;
+      metadata?: { semantic_facts?: { candidate_flow?: CandidateFlow } };
       [key: string]: unknown;
     };
     const findings = (result.findings as RawFinding[]).map((f) => {
@@ -73,11 +81,32 @@ export async function POST(request: Request) {
         resolvedFile && files[resolvedFile]
           ? correctLineForSnippet(files[resolvedFile], f.snippet, reportedLine)
           : reportedLine;
+
+      if (correctedLine != null) {
+        return {
+          ...f,
+          resolved_file: resolvedFile,
+          line_number: correctedLine,
+          reported_line_number: reportedLine,
+          line_inferred: false,
+        };
+      }
+
+      // Still file-level: if the tool's own metadata points at a network flow
+      // through a specific file, try to pin an actual line in that file instead
+      // of leaving this as a vague file-wide warning.
+      const flow = f.metadata?.semantic_facts?.candidate_flow;
+      const isNetworkFlow = flow?.sink_class && /network/i.test(flow.sink_class);
+      const inferred = isNetworkFlow
+        ? inferLineFromFlow(files, byNormalizedKey, flow!.sink_path ?? flow!.source_path, NETWORK_LIBRARY_PATTERN)
+        : null;
+
       return {
         ...f,
-        resolved_file: resolvedFile,
-        line_number: correctedLine,
+        resolved_file: inferred?.file ?? resolvedFile,
+        line_number: inferred?.line ?? correctedLine,
         reported_line_number: reportedLine,
+        line_inferred: Boolean(inferred),
       };
     });
 

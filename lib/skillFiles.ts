@@ -73,4 +73,35 @@ export function correctLineForSnippet(
   );
 }
 
+// Matches common network library imports/calls, used to pin a line for findings
+// whose location the scanner only knows at the file level (e.g. "undeclared
+// network usage"). Deliberately scoped to network signatures only — this isn't a
+// general "find anything" heuristic.
+export const NETWORK_LIBRARY_PATTERN =
+  /\b(urllib(\.request)?|requests|http\.client|socket|aiohttp|httpx)\b|fetch\(|axios\.|XMLHttpRequest|\bcurl\s|\bwget\s/i;
+
+// Some file-level findings carry a "candidate_flow" in their metadata pointing at
+// the file actually responsible (e.g. SKILL.md gets flagged for undeclared network
+// use, but the real network call is in a helper script it references). When that's
+// present and the flow is network-related, search the real file for a line
+// matching `pattern` and use that as the finding's location instead of leaving it
+// file-level.
+export function inferLineFromFlow(
+  files: Record<string, string>,
+  byNormalizedKey: Map<string, string>,
+  candidatePath: string | undefined,
+  pattern: RegExp
+): { file: string; line: number } | null {
+  if (!candidatePath) return null;
+  const resolved = byNormalizedKey.get(normalizeKey(candidatePath));
+  if (!resolved) return null;
+  const content = files[resolved];
+  if (!content) return null;
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (pattern.test(lines[i])) return { file: resolved, line: i + 1 };
+  }
+  return null;
+}
+
 export { TEXT_EXTENSIONS };
