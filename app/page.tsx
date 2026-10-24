@@ -21,12 +21,10 @@ type Finding = {
 
 type ScanResult = {
   skill_name: string;
-  label: string;
   is_safe: boolean;
   max_severity: string;
   findings_count: number;
   findings: Finding[];
-  files: Record<string, string>;
 };
 
 const PRESET_SKILLS = [
@@ -65,9 +63,16 @@ function lineKey(file: string, line: number) {
   return `${file}#${line}`;
 }
 
+// "preset": files always come fresh from /api/seed/<selected> on each Scan.
+// "custom": files are whatever's in memory (an upload, or a preset with edits
+// applied) — Scan re-sends them as-is instead of re-fetching the seed.
+type Mode = "preset" | "custom";
+
 export default function Home() {
-  const [customSkills, setCustomSkills] = useState<{ id: string; label: string }[]>([]);
   const [selected, setSelected] = useState(PRESET_SKILLS[0].id);
+  const [mode, setMode] = useState<Mode>("preset");
+  const [files, setFiles] = useState<Record<string, string> | null>(null);
+  const [customLabel, setCustomLabel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -82,7 +87,13 @@ export default function Home() {
   const findingRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function runScan(skillId: string) {
+  // Fire-and-forget: start waking the Render-hosted scanner as early as possible
+  // instead of waiting for the user's first Scan click.
+  useEffect(() => {
+    fetch("/api/warm").catch(() => {});
+  }, []);
+
+  async function runScanOn(targetFiles: Record<string, string>) {
     setLoading(true);
     setError(null);
     setSelectedFindingId(null);
@@ -91,7 +102,7 @@ export default function Home() {
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skillId }),
+        body: JSON.stringify({ files: targetFiles }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -105,27 +116,50 @@ export default function Home() {
     }
   }
 
+  async function handleScanClick() {
+    if (mode === "preset") {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/seed/${selected}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load seed skill");
+        setFiles(data.files);
+        await runScanOn(data.files);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      }
+      return;
+    }
+    if (files) await runScanOn(files);
+  }
+
+  function handleSelectChange(id: string) {
+    setSelected(id);
+    setMode("preset");
+    setFiles(null);
+    setCustomLabel(null);
+    setResult(null);
+    setError(null);
+  }
+
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
     setUploadError(null);
     try {
-      const form = new FormData();
-      form.append("count", String(fileList.length));
-      Array.from(fileList).forEach((file, i) => {
+      const entries: [string, string][] = [];
+      for (const file of Array.from(fileList)) {
         const relPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        form.append(`path_${i}`, relPath);
-        form.append(`file_${i}`, file);
-      });
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Upload failed");
+        entries.push([relPath, await file.text()]);
       }
-      setCustomSkills((prev) => [...prev, { id: data.skillId, label: `${data.label} (uploaded)` }]);
-      setSelected(data.skillId);
-      setResult(null); // don't show stale results from whatever was scanned before
+      const filesMap = Object.fromEntries(entries);
+      setFiles(filesMap);
+      setCustomLabel(entries.length === 1 ? entries[0][0] : `${entries.length} files`);
+      setMode("custom");
+      setResult(null);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -135,51 +169,13 @@ export default function Home() {
   }
 
   async function saveEdit() {
-    if (!editingFile || !result) return;
-    const originalLines = result.files[editingFile].split("\n");
-    const content = originalLines
-      .map((lineText, idx) => editsByLine[idx + 1] ?? lineText)
-      .join("\n");
-    const savedFile = editingFile;
-    try {
-      // benign-skill / malicious-skill are committed fixtures — never write to
-      // them directly. First edit of a seed forks it into an editable working
-      // copy, which becomes the new selected skill for this and future edits.
-      let targetSkillId = selected;
-      if (PRESET_SKILLS.some((s) => s.id === selected)) {
-        const forkRes = await fetch("/api/fork", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skillId: selected }),
-        });
-        const forkData = await forkRes.json();
-        if (!forkRes.ok) {
-          throw new Error(forkData.detail || forkData.error || "Fork failed");
-        }
-        targetSkillId = forkData.skillId;
-        setCustomSkills((prev) => [...prev, { id: forkData.skillId, label: forkData.label }]);
-        setSelected(forkData.skillId);
-      }
-
-      const res = await fetch("/api/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skillId: targetSkillId, file: savedFile, content }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Save failed");
-      }
-      // Show the edit immediately instead of the stale pre-edit content while the
-      // rescan is in flight — runScan clears editingFile right away, which would
-      // otherwise flash the old (still-flagged) text back into the read-only view.
-      setResult((prev) =>
-        prev ? { ...prev, files: { ...prev.files, [savedFile]: content } } : prev
-      );
-      await runScan(targetSkillId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+    if (!editingFile || !files) return;
+    const originalLines = files[editingFile].split("\n");
+    const content = originalLines.map((lineText, idx) => editsByLine[idx + 1] ?? lineText).join("\n");
+    const updatedFiles = { ...files, [editingFile]: content };
+    setFiles(updatedFiles);
+    setMode("custom");
+    await runScanOn(updatedFiles);
   }
 
   // file -> line -> findings on that line
@@ -256,7 +252,7 @@ export default function Home() {
     );
   }, [result]);
 
-  const allSkillOptions = [...PRESET_SKILLS, ...customSkills];
+  const displayFiles = files ?? {};
 
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
@@ -264,12 +260,12 @@ export default function Home() {
         <div>
           <div className="mb-3 h-1 w-16 rounded-full bg-violet-600 dark:bg-violet-500" />
           <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-            Skill Scanner — Phase 1 (local, unprotected)
+            Skill Scanner — Phase 1
           </h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
             Click a finding to jump to it in the source, or click a highlighted line to
-            see why it was flagged. Uploaded skills are written to a local temp folder
-            for this session only — no sandboxing yet, that&apos;s phase 2.
+            see why it was flagged. Nothing you scan or edit is written to a server —
+            each scan sends the current file content fresh.
           </p>
         </div>
 
@@ -277,16 +273,16 @@ export default function Home() {
           <select
             className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:border-violet-400"
             value={selected}
-            onChange={(e) => setSelected(e.target.value)}
+            onChange={(e) => handleSelectChange(e.target.value)}
           >
-            {allSkillOptions.map((s) => (
+            {PRESET_SKILLS.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
             ))}
           </select>
           <button
-            onClick={() => runScan(selected)}
+            onClick={handleScanClick}
             disabled={loading}
             className="rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
           >
@@ -303,8 +299,15 @@ export default function Home() {
               disabled={uploading}
               className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
             />
-            {uploading && <span className="text-xs text-zinc-500">Uploading...</span>}
+            {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
           </div>
+
+          {mode === "custom" && customLabel && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-500">
+              Currently viewing: <span className="font-mono">{customLabel}</span>
+              {files && !result && " — click Scan to analyze"}
+            </span>
+          )}
 
           {result && (
             <div className="flex items-center gap-2">
@@ -316,7 +319,7 @@ export default function Home() {
                 {result.is_safe ? "SAFE" : "ISSUES FOUND"}
               </span>
               <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                {result.label} — max severity {result.max_severity}, {result.findings_count}{" "}
+                {result.skill_name} — max severity {result.max_severity}, {result.findings_count}{" "}
                 finding{result.findings_count === 1 ? "" : "s"}
               </span>
             </div>
@@ -338,7 +341,7 @@ export default function Home() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             {/* Source panel: all files stacked in one continuous scroll, no tabs */}
             <div className="flex flex-col gap-4 overflow-auto lg:col-span-3 lg:max-h-[calc(100vh-220px)]">
-              {Object.keys(result.files).map((file) => {
+              {Object.keys(displayFiles).map((file) => {
                 const issueCount = findingsPerFile.get(file) ?? 0;
                 const isEditing = editingFile === file;
                 return (
@@ -416,7 +419,7 @@ export default function Home() {
                       </p>
                     )}
                     <div className="font-mono text-xs leading-5">
-                      {result.files[file].split("\n").map((lineText, idx) => {
+                      {displayFiles[file].split("\n").map((lineText, idx) => {
                         const lineNum = idx + 1;
                         const findingsOnLine = lineIndex.get(file)?.get(lineNum) ?? [];
                         const hasIssue = findingsOnLine.length > 0;

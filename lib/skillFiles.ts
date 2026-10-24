@@ -1,46 +1,5 @@
-import { promises as fs } from "fs";
-import path from "path";
-
-const SKIP_DIRS = new Set([".git", "node_modules", "__pycache__"]);
-const TEXT_EXTENSIONS = new Set([".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".txt", ".sh"]);
-
-// Reads every text file under skillDir and returns { "relative/path.ext": "contents" }
-// using forward-slash-normalized relative paths as keys.
-export async function readSkillFiles(skillDir: string): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-
-  async function walk(dir: string) {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(fullPath);
-      } else if (TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        const relPath = path.relative(skillDir, fullPath).split(path.sep).join("/");
-        out[relPath] = await fs.readFile(fullPath, "utf-8");
-      }
-    }
-  }
-
-  await walk(skillDir);
-  return out;
-}
-
 export function normalizeKey(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase();
-}
-
-// Resolves a user-supplied relative file path against skillDir, refusing anything
-// that would escape it (no "../", no absolute paths). Returns the absolute path or
-// null if the path is unsafe or doesn't match an existing file under skillDir.
-export function safeResolveWithin(skillDir: string, relPath: string): string | null {
-  const normalizedRoot = path.resolve(skillDir);
-  const candidate = path.resolve(normalizedRoot, relPath);
-  if (candidate !== normalizedRoot && !candidate.startsWith(normalizedRoot + path.sep)) {
-    return null;
-  }
-  return candidate;
 }
 
 // The scanner's own line_number is sometimes wrong (observed: a YARA match on a
@@ -104,22 +63,11 @@ export function inferLineFromFlow(
   return null;
 }
 
-// Recursively copies every file/dir from src into dest, skipping the same
-// clutter directories readSkillFiles ignores. Used to fork a seed skill into an
-// editable working copy before any write.
-export async function copyDirRecursive(src: string, dest: string): Promise<void> {
-  await fs.mkdir(dest, { recursive: true });
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      await copyDirRecursive(s, d);
-    } else {
-      await fs.copyFile(s, d);
-    }
-  }
+// Which uploaded file acts as the skill's entry point. If something is already
+// literally named SKILL.md, no override is needed; otherwise the first .md file
+// (by key order) stands in for it.
+export function detectEntryFile(files: Record<string, string>): string | undefined {
+  const hasStandard = Object.keys(files).some((f) => f.toLowerCase() === "skill.md");
+  if (hasStandard) return undefined;
+  return Object.keys(files).find((f) => f.toLowerCase().endsWith(".md"));
 }
-
-export { TEXT_EXTENSIONS };
