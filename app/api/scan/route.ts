@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { promises as fs } from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 
@@ -22,6 +23,9 @@ const SKILL_SCANNER_BIN =
     "skill-scanner.exe"
   );
 
+const SKIP_DIRS = new Set([".git", "node_modules", "__pycache__"]);
+const TEXT_EXTENSIONS = new Set([".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".txt", ".sh"]);
+
 function runScan(skillPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -39,6 +43,33 @@ function runScan(skillPath: string): Promise<string> {
   });
 }
 
+// Reads every text file under skillDir and returns { "relative/path.ext": "contents" }
+// using forward-slash-normalized relative paths as keys.
+async function readSkillFiles(skillDir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+
+  async function walk(dir: string) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        const relPath = path.relative(skillDir, fullPath).split(path.sep).join("/");
+        out[relPath] = await fs.readFile(fullPath, "utf-8");
+      }
+    }
+  }
+
+  await walk(skillDir);
+  return out;
+}
+
+function normalizeKey(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase();
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const skillId = body?.skillId;
@@ -50,10 +81,30 @@ export async function POST(request: Request) {
     );
   }
 
+  const skillDir = SAMPLE_SKILLS[skillId];
+
   try {
-    const stdout = await runScan(SAMPLE_SKILLS[skillId]);
+    const [stdout, files] = await Promise.all([
+      runScan(skillDir),
+      readSkillFiles(skillDir),
+    ]);
     const result = JSON.parse(stdout);
-    return NextResponse.json(result);
+
+    // The scanner is inconsistent about path casing/separators across analyzers
+    // (e.g. "SKILL.md" vs "skill.md", "helpers/x.py" vs "helpers\x.py"), so resolve
+    // each finding's file_path against our actual file map by normalized key.
+    const byNormalizedKey = new Map<string, string>();
+    for (const relPath of Object.keys(files)) {
+      byNormalizedKey.set(normalizeKey(relPath), relPath);
+    }
+
+    type RawFinding = { file_path?: string | null; [key: string]: unknown };
+    const findings = (result.findings as RawFinding[]).map((f) => ({
+      ...f,
+      resolved_file: f.file_path ? byNormalizedKey.get(normalizeKey(f.file_path)) ?? null : null,
+    }));
+
+    return NextResponse.json({ ...result, findings, files });
   } catch (err) {
     return NextResponse.json(
       { error: "Scan failed", detail: err instanceof Error ? err.message : String(err) },
