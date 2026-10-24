@@ -82,6 +82,11 @@ export default function Home() {
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editsByLine, setEditsByLine] = useState<Record<number, string>>({});
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // Keyed by finding.id — AI-suggested fixes are per-finding, requested on
+  // demand, and don't touch the file until the user explicitly accepts one.
+  const [suggestions, setSuggestions] = useState<
+    Record<string, { status: "loading" | "done" | "error"; text?: string; error?: string }>
+  >({});
   // "checking": waiting on the first /api/warm response. "cold": remote scanner
   // confirmed asleep — Scan stays disabled and we keep re-polling /api/warm until
   // it actually reports ready, rather than guessing a fixed wake time and
@@ -256,6 +261,60 @@ export default function Home() {
       setCustomLabel(`${presetLabel} (edited)`);
     }
     await runScanOn(updatedFiles);
+  }
+
+  async function requestSuggestion(f: Finding) {
+    if (!f.resolved_file || f.line_number == null || !files) return;
+    setSuggestions((prev) => ({ ...prev, [f.id]: { status: "loading" } }));
+    try {
+      const res = await fetch("/api/suggest-fix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileContent: files[f.resolved_file],
+          fileName: f.resolved_file,
+          lineNumber: f.line_number,
+          findingTitle: f.title,
+          findingDescription: f.description,
+          remediation: f.remediation,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Suggestion failed");
+      setSuggestions((prev) => ({ ...prev, [f.id]: { status: "done", text: data.suggestion } }));
+    } catch (err) {
+      setSuggestions((prev) => ({
+        ...prev,
+        [f.id]: { status: "error", error: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  }
+
+  // Applies the suggestion into the normal per-line edit mechanism (same slot
+  // manual edits use) rather than saving directly — the user still reviews it in
+  // context and clicks Save & rescan themselves before it goes anywhere.
+  function acceptSuggestion(f: Finding) {
+    if (!f.resolved_file || f.line_number == null) return;
+    const suggestion = suggestions[f.id];
+    if (!suggestion || suggestion.status !== "done" || suggestion.text == null) return;
+    const line = f.line_number;
+    const text = suggestion.text;
+    setEditsByLine((prev) => (editingFile === f.resolved_file ? { ...prev, [line]: text } : { [line]: text }));
+    setEditingFile(f.resolved_file);
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      delete next[f.id];
+      return next;
+    });
+    selectFinding(f);
+  }
+
+  function dismissSuggestion(f: Finding) {
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      delete next[f.id];
+      return next;
+    });
   }
 
   // file -> line -> findings on that line
@@ -620,6 +679,64 @@ export default function Home() {
                     <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
                       Suggested fix: {f.remediation}
                     </p>
+                  )}
+                  {f.resolved_file && f.line_number != null && (
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {!suggestions[f.id] && (
+                        <button
+                          onClick={() => requestSuggestion(f)}
+                          className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
+                        >
+                          Suggest a fix (AI)
+                        </button>
+                      )}
+                      {suggestions[f.id]?.status === "loading" && (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-500">
+                          Asking Groq...
+                        </span>
+                      )}
+                      {suggestions[f.id]?.status === "error" && (
+                        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+                          <span>{suggestions[f.id]?.error}</span>
+                          <button
+                            onClick={() => requestSuggestion(f)}
+                            className="rounded border border-red-300 px-2 py-0.5 dark:border-red-800"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                      {suggestions[f.id]?.status === "done" && (
+                        <div className="rounded border border-violet-300 bg-violet-50 p-2 dark:border-violet-800 dark:bg-violet-950/40">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400">
+                            Current
+                          </p>
+                          <p className="truncate font-mono text-xs text-zinc-500 line-through decoration-red-400 dark:text-zinc-500">
+                            {files?.[f.resolved_file]?.split("\n")[f.line_number - 1]}
+                          </p>
+                          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-violet-500 dark:text-violet-400">
+                            Suggested
+                          </p>
+                          <p className="whitespace-pre-wrap font-mono text-xs text-black dark:text-zinc-100">
+                            {suggestions[f.id]?.text}
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => acceptSuggestion(f)}
+                              className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              onClick={() => dismissSuggestion(f)}
+                              className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-900/40"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
