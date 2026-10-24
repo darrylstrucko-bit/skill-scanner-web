@@ -73,7 +73,7 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState<string | null>(null);
-  const [editBuffer, setEditBuffer] = useState("");
+  const [editsByLine, setEditsByLine] = useState<Record<number, string>>({});
 
   const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -134,11 +134,15 @@ export default function Home() {
 
   async function saveEdit() {
     if (!editingFile || !result) return;
+    const originalLines = result.files[editingFile].split("\n");
+    const content = originalLines
+      .map((lineText, idx) => editsByLine[idx + 1] ?? lineText)
+      .join("\n");
     try {
       const res = await fetch("/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skillId: selected, file: editingFile, content: editBuffer }),
+        body: JSON.stringify({ skillId: selected, file: editingFile, content }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -265,9 +269,9 @@ export default function Home() {
               ref={uploadInputRef}
               type="file"
               multiple
+              accept=".md,.py,.js,.ts,.json,.yaml,.yml,.txt,.sh"
               onChange={handleUpload}
               disabled={uploading}
-              {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
               className="text-xs text-zinc-600 file:mr-2 file:rounded file:border-0 file:bg-zinc-200 file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-zinc-400 dark:file:bg-zinc-800 dark:file:text-zinc-100"
             />
             {uploading && <span className="text-xs text-zinc-500">Uploading &amp; scanning...</span>}
@@ -346,7 +350,7 @@ export default function Home() {
                         <button
                           onClick={() => {
                             setEditingFile(file);
-                            setEditBuffer(result.files[file]);
+                            setEditsByLine({});
                           }}
                           className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
                         >
@@ -374,44 +378,54 @@ export default function Home() {
                       </div>
                     )}
 
-                    {isEditing ? (
-                      <textarea
-                        value={editBuffer}
-                        onChange={(e) => setEditBuffer(e.target.value)}
-                        className="h-80 w-full resize-y border-0 bg-white p-3 font-mono text-xs text-black outline-none dark:bg-zinc-900 dark:text-zinc-100"
-                        spellCheck={false}
-                      />
-                    ) : (
-                      <div className="overflow-x-auto font-mono text-xs leading-5">
-                        {result.files[file].split("\n").map((lineText, idx) => {
-                          const lineNum = idx + 1;
-                          const findingsOnLine = lineIndex.get(file)?.get(lineNum) ?? [];
-                          const hasIssue = findingsOnLine.length > 0;
-                          const isSelected = findingsOnLine.some((f) => f.id === selectedFindingId);
-                          const bg = hasIssue ? SEVERITY_LINE_BG[worstSeverity(findingsOnLine)] : "";
-                          return (
-                            <div
-                              key={lineNum}
-                              ref={(el) => {
-                                lineRefs.current[lineKey(file, lineNum)] = el;
-                              }}
-                              onClick={() => hasIssue && selectLine(file, lineNum)}
-                              className={`flex px-2 ${bg} ${hasIssue ? "cursor-pointer" : ""} ${
-                                isSelected ? "ring-2 ring-inset ring-black dark:ring-white" : ""
-                              }`}
-                              title={hasIssue ? findingsOnLine.map((f) => f.title).join("; ") : undefined}
-                            >
-                              <span className="w-8 shrink-0 select-none text-right text-zinc-400">
-                                {lineNum}
-                              </span>
+                    {isEditing && (
+                      <p className="border-b border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-500">
+                        Flagged lines are editable below — everything else is read-only in
+                        this view.
+                      </p>
+                    )}
+                    <div className="overflow-x-auto font-mono text-xs leading-5">
+                      {result.files[file].split("\n").map((lineText, idx) => {
+                        const lineNum = idx + 1;
+                        const findingsOnLine = lineIndex.get(file)?.get(lineNum) ?? [];
+                        const hasIssue = findingsOnLine.length > 0;
+                        const isSelected = findingsOnLine.some((f) => f.id === selectedFindingId);
+                        const bg = hasIssue ? SEVERITY_LINE_BG[worstSeverity(findingsOnLine)] : "";
+                        const isLineEditing = isEditing && hasIssue;
+                        return (
+                          <div
+                            key={lineNum}
+                            ref={(el) => {
+                              lineRefs.current[lineKey(file, lineNum)] = el;
+                            }}
+                            onClick={() => !isEditing && hasIssue && selectLine(file, lineNum)}
+                            className={`flex px-2 ${bg} ${hasIssue && !isEditing ? "cursor-pointer" : ""} ${
+                              isSelected ? "ring-2 ring-inset ring-black dark:ring-white" : ""
+                            }`}
+                            title={hasIssue ? findingsOnLine.map((f) => f.title).join("; ") : undefined}
+                          >
+                            <span className="w-8 shrink-0 select-none text-right text-zinc-400">
+                              {lineNum}
+                            </span>
+                            {isLineEditing ? (
+                              <input
+                                value={editsByLine[lineNum] ?? lineText}
+                                onChange={(e) =>
+                                  setEditsByLine((prev) => ({ ...prev, [lineNum]: e.target.value }))
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                                spellCheck={false}
+                                className="ml-3 flex-1 border-0 bg-transparent font-mono text-xs text-black outline-none dark:text-zinc-100"
+                              />
+                            ) : (
                               <span className="ml-3 whitespace-pre-wrap text-black dark:text-zinc-100">
                                 {lineText || " "}
                               </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}

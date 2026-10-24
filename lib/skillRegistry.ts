@@ -13,10 +13,14 @@ export const UPLOADS_ROOT = path.join(process.cwd(), ".uploads");
 
 const uploadedSkills = new Map<string, string>();
 const uploadLabels = new Map<string, string>();
+// skill-scanner requires a literal SKILL.md by default; when the uploaded entry
+// file has a different name we pass --skill-file <name> instead.
+const uploadSkillFile = new Map<string, string>();
 
-export function registerUpload(id: string, dir: string, label: string): void {
+export function registerUpload(id: string, dir: string, label: string, skillFile?: string): void {
   uploadedSkills.set(id, dir);
   uploadLabels.set(id, label);
+  if (skillFile) uploadSkillFile.set(id, skillFile);
 }
 
 export function resolveSkillDir(skillId: string): string | null {
@@ -26,6 +30,10 @@ export function resolveSkillDir(skillId: string): string | null {
 
 export function uploadLabel(skillId: string): string | null {
   return uploadLabels.get(skillId) ?? null;
+}
+
+export function skillFileOverride(skillId: string): string | null {
+  return uploadSkillFile.get(skillId) ?? null;
 }
 
 export function isKnownSkill(skillId: string): boolean {

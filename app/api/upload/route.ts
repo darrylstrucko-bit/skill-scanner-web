@@ -59,11 +59,13 @@ export async function POST(request: Request) {
     entries.push({ relPath, blob });
   }
 
-  // If every path shares the same first segment (the picked folder's name), strip it
-  // so the uploaded skill's files land directly at the new skill root.
+  // Only strip a common leading folder when every path actually has one (a real
+  // folder selection). Flat file picks (no subdirectory) must be left alone, or a
+  // single-file upload's whole filename gets stripped down to nothing.
+  const allNested = entries.every((e) => e.relPath.includes("/"));
   const firstSegments = new Set(entries.map((e) => e.relPath.split("/")[0]));
-  const commonPrefix = firstSegments.size === 1 ? [...firstSegments][0] : null;
-  const label = commonPrefix ?? "uploaded-skill";
+  const commonPrefix = allNested && firstSegments.size === 1 ? [...firstSegments][0] : null;
+  const label = commonPrefix ?? (entries.length === 1 ? entries[0].relPath : "uploaded-skill");
 
   const rawId = randomUUID();
   const skillId = `upload:${rawId}`;
@@ -71,6 +73,7 @@ export async function POST(request: Request) {
 
   try {
     await fs.mkdir(uploadDir, { recursive: true });
+    const writtenPaths: string[] = [];
     for (const { relPath, blob } of entries) {
       const strippedPath = commonPrefix
         ? relPath.slice(commonPrefix.length + 1)
@@ -80,10 +83,19 @@ export async function POST(request: Request) {
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       const buf = Buffer.from(await blob.arrayBuffer());
       await fs.writeFile(targetPath, buf);
+      writtenPaths.push(strippedPath);
     }
 
-    registerUpload(skillId, uploadDir, label);
-    return NextResponse.json({ skillId, label });
+    // skill-scanner requires a literal SKILL.md by default. If none was uploaded,
+    // fall back to the first .md file and tell the scanner to treat it as the
+    // entry point via --skill-file.
+    const hasStandardName = writtenPaths.some((p) => p.toLowerCase() === "skill.md");
+    const skillFile = hasStandardName
+      ? undefined
+      : writtenPaths.find((p) => p.toLowerCase().endsWith(".md"));
+
+    registerUpload(skillId, uploadDir, label, skillFile);
+    return NextResponse.json({ skillId, label, skillFile: skillFile ?? null });
   } catch (err) {
     return NextResponse.json(
       { error: "Upload failed", detail: err instanceof Error ? err.message : String(err) },

@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import path from "path";
 import { NextResponse } from "next/server";
-import { resolveSkillDir, isKnownSkill, uploadLabel } from "@/lib/skillRegistry";
+import { resolveSkillDir, isKnownSkill, uploadLabel, skillFileOverride } from "@/lib/skillRegistry";
 import { readSkillFiles, normalizeKey } from "@/lib/skillFiles";
 
 // Phase 1: trusted local samples plus locally-uploaded folders (see /api/upload).
@@ -16,11 +16,13 @@ const SKILL_SCANNER_BIN =
     "skill-scanner.exe"
   );
 
-function runScan(skillPath: string): Promise<string> {
+function runScan(skillPath: string, skillFile: string | null): Promise<string> {
+  const args = ["scan", skillPath, "--format", "json"];
+  if (skillFile) args.push("--skill-file", skillFile);
   return new Promise((resolve, reject) => {
     execFile(
       SKILL_SCANNER_BIN,
-      ["scan", skillPath, "--format", "json"],
+      args,
       { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
 
   try {
     const [stdout, files] = await Promise.all([
-      runScan(skillDir),
+      runScan(skillDir, skillFileOverride(skillId)),
       readSkillFiles(skillDir),
     ]);
     const result = JSON.parse(stdout);
