@@ -99,7 +99,13 @@ export default function Home() {
   // from "gave up waiting, no idea" — only the former should rule out cold-start
   // as the explanation if a scan later runs long.
   const [isRemote, setIsRemote] = useState(false);
-  const [warmConfirmed, setWarmConfirmed] = useState(false);
+  // Timestamp of the last scan that actually completed against the remote
+  // scanner — the only reliable "it's warm" signal (see note in checkWarm:
+  // /api/warm's health ping isn't enough). Render spins down after ~15 min
+  // idle, so a completion from 20 minutes ago isn't evidence it's still warm
+  // now. Used to word the in-scan "taking a while" message honestly instead of
+  // assuming either cause.
+  const [lastKnownWarmAt, setLastKnownWarmAt] = useState<number | null>(null);
 
   const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -124,7 +130,12 @@ export default function Home() {
 
         if (!data.remote || data.warmed) {
           setWarmupState("warm");
-          setWarmConfirmed(true);
+          // Deliberately NOT updating lastKnownWarmAt here: /api/warm only pings
+          // Render's lightweight /health route, which can respond before the
+          // scanner's actual scan endpoint has finished cold-starting (observed
+          // directly — /api/warm reported ready while a real scan still took
+          // 40+ seconds). Only a scan that actually completes is trustworthy
+          // evidence the full request path is warm.
           return;
         }
 
@@ -134,8 +145,8 @@ export default function Home() {
 
         // Give up waiting after a while and let them try anyway — the scan's own
         // 120s timeout and elapsed-time indicator take over from there. Note this
-        // does NOT set warmConfirmed — we're letting them proceed, not claiming
-        // we know it's actually ready.
+        // does NOT update lastKnownWarmAt — we're letting them proceed, not
+        // claiming we know it's actually ready.
         if (elapsed < 90) {
           pollTimer = setTimeout(checkWarm, 4000);
         } else {
@@ -185,6 +196,9 @@ export default function Home() {
         throw new Error(data.detail || data.error || "Scan failed");
       }
       setResult(data);
+      // A completed scan is proof the server was up just now — refresh the
+      // freshness window so a *later* slow scan isn't blamed on cold-start too.
+      setLastKnownWarmAt(Date.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -218,12 +232,21 @@ export default function Home() {
     }
   }
 
-  // Show something on first load instead of a blank page until the user acts.
-  // Deferred a tick so the effect body itself has no synchronous setState calls.
-  useEffect(() => {
-    const t = setTimeout(() => selectPreset(PRESET_SKILLS[0].id), 0);
-    return () => clearTimeout(t);
-  }, []);
+  // Reset back to the idle state: header + selector only, architecture diagram
+  // below. Does not touch warm-up state — the server staying awake has nothing
+  // to do with what the user has loaded on screen.
+  function clearAll() {
+    setFiles(null);
+    setResult(null);
+    setError(null);
+    setUploadError(null);
+    setCustomLabel(null);
+    setMode("preset");
+    setSelectedFindingId(null);
+    setEditingFile(null);
+    setEditsByLine({});
+    setSuggestions({});
+  }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
@@ -393,6 +416,11 @@ export default function Home() {
 
   const displayFiles = files ?? {};
 
+  // Render spins down after ~15 min idle; trust a warm confirmation for 10 min
+  // (safety margin) before treating the server's current state as unknown again.
+  const recentlyWarm =
+    lastKnownWarmAt != null && Date.now() - lastKnownWarmAt < 10 * 60 * 1000;
+
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -449,6 +477,15 @@ export default function Home() {
             {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
           </div>
 
+          {(files || result) && (
+            <button
+              onClick={clearAll}
+              className="rounded border border-zinc-300 px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
+            >
+              Clear
+            </button>
+          )}
+
           {mode === "custom" && customLabel && (
             <div className="flex items-center gap-1.5 rounded border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-800 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
               <span className="text-violet-500 dark:text-violet-500">Selected:</span>
@@ -458,15 +495,15 @@ export default function Home() {
 
           {isWarmingUp && (
             <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              Scanner is waking up from idle — {warmupElapsed}s so far (usually under a
-              minute)
+              Server is starting up (not scanning yet) — {warmupElapsed}s so far, usually
+              under a minute.
             </span>
           )}
           {loading && elapsedSeconds >= 8 && (
             <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              {isRemote && !warmConfirmed
-                ? "Taking a while — the scanner may still be waking up from idle (can take up to ~2 minutes in rare cases)."
-                : "Taking longer than usual — larger or more complex skills take more time to scan."}
+              {isRemote && !recentlyWarm
+                ? "Still going — most likely the server is still finishing its wake-up from idle, not the scan itself (can take up to ~2 minutes in rare cases)."
+                : "Still scanning — this skill is just taking longer (larger or more complex files take more time)."}
             </span>
           )}
 
@@ -495,6 +532,20 @@ export default function Home() {
         {error && (
           <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
             {error}
+          </div>
+        )}
+
+        {!files && (
+          <div className="flex flex-col items-center gap-4 rounded border border-dashed border-zinc-300 py-10 dark:border-zinc-700">
+            <p className="text-sm text-zinc-500 dark:text-zinc-500">
+              Pick a preset chip or choose a file above to load it for scanning.
+            </p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/skill-scanner-arch2.png"
+              alt="Architecture diagram: the Vercel-hosted Next.js web app calls Render, which runs Cisco's open-source Skill Scanner, and Groq, which suggests fixes using Alibaba Qwen 3.8"
+              className="w-full max-w-xl"
+            />
           </div>
         )}
 
