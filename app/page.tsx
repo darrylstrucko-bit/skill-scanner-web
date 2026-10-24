@@ -14,6 +14,7 @@ type Finding = {
   file_path: string | null;
   resolved_file: string | null;
   line_number: number | null;
+  reported_line_number: number | null;
   remediation: string | null;
 };
 
@@ -459,6 +460,14 @@ export default function Home() {
                     <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
                       {f.resolved_file}
                       {f.line_number ? `:${f.line_number}` : " (file-level)"}
+                      {f.line_number != null &&
+                        f.reported_line_number != null &&
+                        f.reported_line_number !== f.line_number && (
+                          <span className="ml-1 text-amber-600 dark:text-amber-500">
+                            (scanner reported line {f.reported_line_number}, corrected by
+                            text match)
+                          </span>
+                        )}
                     </p>
                   )}
                   {f.remediation && (

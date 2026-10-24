@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import path from "path";
 import { NextResponse } from "next/server";
 import { resolveSkillDir, isKnownSkill, uploadLabel, skillFileOverride } from "@/lib/skillRegistry";
-import { readSkillFiles, normalizeKey } from "@/lib/skillFiles";
+import { readSkillFiles, normalizeKey, correctLineForSnippet } from "@/lib/skillFiles";
 
 // Phase 1: trusted local samples plus locally-uploaded folders (see /api/upload).
 // Still no network-facing exposure and no real sandboxing — that's phase 2.
@@ -60,11 +60,26 @@ export async function POST(request: Request) {
       byNormalizedKey.set(normalizeKey(relPath), relPath);
     }
 
-    type RawFinding = { file_path?: string | null; [key: string]: unknown };
-    const findings = (result.findings as RawFinding[]).map((f) => ({
-      ...f,
-      resolved_file: f.file_path ? byNormalizedKey.get(normalizeKey(f.file_path)) ?? null : null,
-    }));
+    type RawFinding = {
+      file_path?: string | null;
+      line_number?: number | null;
+      snippet?: string | null;
+      [key: string]: unknown;
+    };
+    const findings = (result.findings as RawFinding[]).map((f) => {
+      const resolvedFile = f.file_path ? byNormalizedKey.get(normalizeKey(f.file_path)) ?? null : null;
+      const reportedLine = f.line_number ?? null;
+      const correctedLine =
+        resolvedFile && files[resolvedFile]
+          ? correctLineForSnippet(files[resolvedFile], f.snippet, reportedLine)
+          : reportedLine;
+      return {
+        ...f,
+        resolved_file: resolvedFile,
+        line_number: correctedLine,
+        reported_line_number: reportedLine,
+      };
+    });
 
     return NextResponse.json({
       ...result,

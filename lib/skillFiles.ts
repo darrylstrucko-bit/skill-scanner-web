@@ -43,4 +43,34 @@ export function safeResolveWithin(skillDir: string, relPath: string): string | n
   return candidate;
 }
 
+// The scanner's own line_number is sometimes wrong (observed: a YARA match on a
+// multi-line YAML field gets attributed to the field's start line instead of the
+// line the matched text is actually on). When a finding carries a snippet of the
+// actual matched text, re-derive the line by searching the real file content for
+// it rather than trusting the reported number outright.
+export function correctLineForSnippet(
+  content: string,
+  snippet: string | null | undefined,
+  reportedLine: number | null
+): number | null {
+  if (!snippet) return reportedLine;
+  const trimmed = snippet.trim();
+  if (!trimmed) return reportedLine;
+
+  const lines = content.split("\n");
+  const matches: number[] = [];
+  lines.forEach((line, idx) => {
+    if (line.includes(trimmed)) matches.push(idx + 1);
+  });
+
+  if (matches.length === 0) return reportedLine; // can't verify, trust the tool
+  if (matches.length === 1) return matches[0];
+  if (reportedLine == null) return matches[0];
+  // Multiple identical lines (e.g. a duplicated snippet) — pick whichever match
+  // is closest to what the tool originally reported.
+  return matches.reduce((best, cur) =>
+    Math.abs(cur - reportedLine) < Math.abs(best - reportedLine) ? cur : best
+  );
+}
+
 export { TEXT_EXTENSIONS };
