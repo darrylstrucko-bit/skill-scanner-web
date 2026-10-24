@@ -90,6 +90,11 @@ export default function Home() {
   // awake, or there's no remote scanner at all (local dev).
   const [warmupState, setWarmupState] = useState<"checking" | "cold" | "warm">("checking");
   const [warmupElapsed, setWarmupElapsed] = useState(0);
+  // Separate from warmupState so we can tell "genuinely confirmed awake" apart
+  // from "gave up waiting, no idea" — only the former should rule out cold-start
+  // as the explanation if a scan later runs long.
+  const [isRemote, setIsRemote] = useState(false);
+  const [warmConfirmed, setWarmConfirmed] = useState(false);
 
   const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -110,8 +115,11 @@ export default function Home() {
         const data = await res.json();
         if (cancelled) return;
 
+        setIsRemote(Boolean(data.remote));
+
         if (!data.remote || data.warmed) {
           setWarmupState("warm");
+          setWarmConfirmed(true);
           return;
         }
 
@@ -120,14 +128,17 @@ export default function Home() {
         setWarmupState("cold");
 
         // Give up waiting after a while and let them try anyway — the scan's own
-        // 90s timeout and elapsed-time indicator take over from there.
+        // 120s timeout and elapsed-time indicator take over from there. Note this
+        // does NOT set warmConfirmed — we're letting them proceed, not claiming
+        // we know it's actually ready.
         if (elapsed < 90) {
           pollTimer = setTimeout(checkWarm, 4000);
         } else {
           setWarmupState("warm");
         }
       } catch {
-        if (!cancelled) setWarmupState("warm"); // can't tell — don't block on a guess
+        // Can't tell — don't block on a guess, but don't claim confirmation either.
+        if (!cancelled) setWarmupState("warm");
       }
     }
 
@@ -236,6 +247,10 @@ export default function Home() {
     const updatedFiles = { ...files, [editingFile]: content };
     setFiles(updatedFiles);
     setMode("custom");
+    if (!customLabel) {
+      const presetLabel = PRESET_SKILLS.find((s) => s.id === selected)?.label ?? selected;
+      setCustomLabel(`${presetLabel} (edited)`);
+    }
     await runScanOn(updatedFiles);
   }
 
@@ -318,21 +333,25 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
-        <div>
-          <div className="mb-3 h-1 w-16 rounded-full bg-violet-600 dark:bg-violet-500" />
-          <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-            Skill Scanner — Phase 1
-          </h1>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            Click a finding to jump to it in the source, or click a highlighted line to
-            see why it was flagged. Nothing you scan or edit is written to a server —
-            each scan sends the current file content fresh.
-          </p>
+        <div className="flex items-start gap-3">
+          <div className="mt-1 h-8 w-1.5 shrink-0 rounded-full bg-violet-700 dark:bg-violet-500" />
+          <div>
+            <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
+              Skill Scanner — Phase 1
+            </h1>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              Click a finding to jump to it in the source, or click a highlighted line to
+              see why it was flagged. Nothing you scan or edit is written to a server —
+              each scan sends the current file content fresh.
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <select
-            className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:border-violet-400"
+            className={`rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors transition-opacity focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:border-violet-400 ${
+              mode === "custom" ? "opacity-50" : ""
+            }`}
             value={selected}
             onChange={(e) => handleSelectChange(e.target.value)}
           >
@@ -345,23 +364,10 @@ export default function Home() {
           <button
             onClick={handleScanClick}
             disabled={loading || isWarmingUp}
-            className="rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+            className="rounded bg-violet-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
           >
             {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
           </button>
-          {isWarmingUp && (
-            <span className="text-xs text-zinc-500 dark:text-zinc-500">
-              Scanner is waking up from idle — {warmupElapsed}s so far (usually under a
-              minute)
-            </span>
-          )}
-          {loading && elapsedSeconds >= 8 && (
-            <span className="text-xs text-zinc-500 dark:text-zinc-500">
-              Taking a while — the scanner may still be waking up from idle (can take
-              up to ~2 minutes in rare cases).
-            </span>
-          )}
-
           <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
             <input
               ref={uploadInputRef}
@@ -375,8 +381,22 @@ export default function Home() {
             {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
           </div>
 
+          {isWarmingUp && (
+            <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              Scanner is waking up from idle — {warmupElapsed}s so far (usually under a
+              minute)
+            </span>
+          )}
+          {loading && elapsedSeconds >= 8 && (
+            <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              {isRemote && !warmConfirmed
+                ? "Taking a while — the scanner may still be waking up from idle (can take up to ~2 minutes in rare cases)."
+                : "Taking longer than usual — larger or more complex skills take more time to scan."}
+            </span>
+          )}
+
           {mode === "custom" && customLabel && (
-            <span className="text-xs text-zinc-500 dark:text-zinc-500">
+            <span className="rounded bg-violet-100 px-2 py-1 text-xs font-medium text-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
               Currently viewing: <span className="font-mono">{customLabel}</span>
               {files && !result && " — click Scan to analyze"}
             </span>
@@ -440,7 +460,7 @@ export default function Home() {
                         <div className="flex gap-2">
                           <button
                             onClick={saveEdit}
-                            className="rounded bg-violet-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+                            className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
                           >
                             Save &amp; rescan
                           </button>
