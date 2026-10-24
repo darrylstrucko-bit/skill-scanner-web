@@ -139,6 +139,12 @@ export async function scanFiles(files: Record<string, string>): Promise<ScanResp
   validateFiles(files);
 
   const apiUrl = process.env.SKILL_SCANNER_API_URL;
+  if (!apiUrl && process.env.VERCEL) {
+    throw new Error(
+      "SKILL_SCANNER_API_URL is not set in this environment. There's no local Python CLI " +
+        "to fall back to on Vercel — set it to the Render-hosted scanner's URL."
+    );
+  }
   const stdout = apiUrl ? await scanRemote(files, apiUrl) : await scanLocal(files);
   const result = JSON.parse(stdout);
 
