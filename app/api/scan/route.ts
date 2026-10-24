@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { scanFiles, ScanInputError } from "@/lib/scanBackend";
 
+// Headroom above scanRemote's own 90s fetch timeout, so Vercel's platform-level
+// limit (300s default on Hobby) never kills the function before our own timeout
+// has a chance to fire with a clear error.
+export const maxDuration = 100;
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const files = body?.files;

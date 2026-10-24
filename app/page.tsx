@@ -81,20 +81,65 @@ export default function Home() {
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editsByLine, setEditsByLine] = useState<Record<number, string>>({});
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  // "checking": waiting on the initial /api/warm response. "cold": remote scanner
+  // confirmed asleep, counting down an estimate of its wake time — Scan stays
+  // disabled meanwhile so a click can't land mid-wakeup and hit the timeout.
+  // "warm": either confirmed awake, or there's no remote scanner at all (local dev).
+  const [warmupState, setWarmupState] = useState<"checking" | "cold" | "warm">("checking");
+  const [warmupRemaining, setWarmupRemaining] = useState(60);
 
   const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const findingRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Fire-and-forget: start waking the Render-hosted scanner as early as possible
-  // instead of waiting for the user's first Scan click.
+  // Start waking the Render-hosted scanner as early as possible instead of
+  // waiting for the user's first Scan click, and surface whether it's actually
+  // awake yet.
   useEffect(() => {
-    fetch("/api/warm").catch(() => {});
+    const pingStartedAt = Date.now();
+    fetch("/api/warm")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.remote || data.warmed) {
+          setWarmupState("warm");
+          return;
+        }
+        const alreadyElapsed = Math.floor((Date.now() - pingStartedAt) / 1000);
+        setWarmupRemaining(Math.max(0, 60 - alreadyElapsed));
+        setWarmupState("cold");
+      })
+      .catch(() => setWarmupState("warm")); // can't tell — don't block on a guess
   }, []);
+
+  // Count the estimate down to zero, then stop — once it reaches zero we treat it
+  // as "probably ready" (see isWarmingUp below) without needing another state
+  // transition here; if it's genuinely still cold, the scan's own elapsed-time
+  // indicator and 90s timeout take over from there.
+  useEffect(() => {
+    if (warmupState !== "cold" || warmupRemaining <= 0) return;
+    const t = setTimeout(() => setWarmupRemaining((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [warmupState, warmupRemaining]);
+
+  const isWarmingUp = warmupState === "cold" && warmupRemaining > 0;
+
+  // Fallback for while a scan is actually in flight (covers both the cold-start
+  // case below and any other reason a scan runs long) — a visible counter instead
+  // of a frozen "Scanning..." button.
+  useEffect(() => {
+    if (!loading) return;
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   async function runScanOn(targetFiles: Record<string, string>) {
     setLoading(true);
+    setElapsedSeconds(0);
     setError(null);
     setSelectedFindingId(null);
     setEditingFile(null);
@@ -119,6 +164,7 @@ export default function Home() {
   async function handleScanClick() {
     if (mode === "preset") {
       setLoading(true);
+      setElapsedSeconds(0);
       setError(null);
       try {
         const res = await fetch(`/api/seed/${selected}`);
@@ -283,11 +329,22 @@ export default function Home() {
           </select>
           <button
             onClick={handleScanClick}
-            disabled={loading}
+            disabled={loading || isWarmingUp}
             className="rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
           >
-            {loading ? "Scanning..." : "Scan"}
+            {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
           </button>
+          {isWarmingUp && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-500">
+              Scanner is waking up from idle — ready in ~{warmupRemaining}s
+            </span>
+          )}
+          {loading && elapsedSeconds >= 8 && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-500">
+              Taking a while — the scanner may be waking up from idle (can take up to
+              ~60s).
+            </span>
+          )}
 
           <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
             <input
