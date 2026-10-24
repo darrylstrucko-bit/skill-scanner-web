@@ -19,6 +19,7 @@ type Finding = {
 
 type ScanResult = {
   skill_name: string;
+  label: string;
   is_safe: boolean;
   max_severity: string;
   findings_count: number;
@@ -26,7 +27,7 @@ type ScanResult = {
   files: Record<string, string>;
 };
 
-const SAMPLE_SKILLS = [
+const PRESET_SKILLS = [
   { id: "benign-skill", label: "benign-skill (expected: clean)" },
   { id: "malicious-skill", label: "malicious-skill (expected: findings)" },
 ];
@@ -58,41 +59,94 @@ function worstSeverity(findings: Finding[]): Severity {
   return SEVERITY_ORDER[best];
 }
 
+function lineKey(file: string, line: number) {
+  return `${file}#${line}`;
+}
+
 export default function Home() {
-  const [selected, setSelected] = useState(SAMPLE_SKILLS[0].id);
+  const [customSkills, setCustomSkills] = useState<{ id: string; label: string }[]>([]);
+  const [selected, setSelected] = useState(PRESET_SKILLS[0].id);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [editBuffer, setEditBuffer] = useState("");
 
-  const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const lineRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const findingRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function runScan() {
+  async function runScan(skillId: string) {
     setLoading(true);
     setError(null);
-    setResult(null);
     setSelectedFindingId(null);
+    setEditingFile(null);
     try {
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skillId: selected }),
+        body: JSON.stringify({ skillId }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.detail || data.error || "Scan failed");
       }
       setResult(data);
-      const firstFile = Object.keys(data.files)[0] ?? null;
-      setActiveFile(
-        Object.keys(data.files).find((f) => f.toLowerCase() === "skill.md") ?? firstFile
-      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const form = new FormData();
+      form.append("count", String(fileList.length));
+      Array.from(fileList).forEach((file, i) => {
+        const relPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        form.append(`path_${i}`, relPath);
+        form.append(`file_${i}`, file);
+      });
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || "Upload failed");
+      }
+      setCustomSkills((prev) => [...prev, { id: data.skillId, label: `${data.label} (uploaded)` }]);
+      setSelected(data.skillId);
+      await runScan(data.skillId);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+    }
+  }
+
+  async function saveEdit() {
+    if (!editingFile || !result) return;
+    try {
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillId: selected, file: editingFile, content: editBuffer }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || "Save failed");
+      }
+      await runScan(selected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -122,29 +176,34 @@ export default function Home() {
     return idx;
   }, [result]);
 
+  const findingsPerFile = useMemo(() => {
+    const idx = new Map<string, number>();
+    if (!result) return idx;
+    for (const f of result.findings) {
+      if (!f.resolved_file) continue;
+      idx.set(f.resolved_file, (idx.get(f.resolved_file) ?? 0) + 1);
+    }
+    return idx;
+  }, [result]);
+
   const orphanFindings = useMemo(
     () => (result ? result.findings.filter((f) => !f.resolved_file) : []),
     [result]
   );
 
-  // Jump the source panel to the selected finding's line whenever selection or file changes.
   useEffect(() => {
-    if (!selectedFindingId) return;
-    const el = lineRefs.current[getSelectedLine()];
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFindingId, activeFile]);
-
-  function getSelectedLine(): number {
-    const f = result?.findings.find((x) => x.id === selectedFindingId);
-    return f?.line_number ?? -1;
-  }
+    if (!selectedFindingId || !result) return;
+    const f = result.findings.find((x) => x.id === selectedFindingId);
+    if (!f || !f.resolved_file) return;
+    const target =
+      f.line_number != null
+        ? lineRefs.current[lineKey(f.resolved_file, f.line_number)]
+        : fileHeaderRefs.current[f.resolved_file];
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [selectedFindingId, result]);
 
   function selectFinding(f: Finding) {
     setSelectedFindingId(f.id);
-    if (f.resolved_file && f.resolved_file !== activeFile) {
-      setActiveFile(f.resolved_file);
-    }
     requestAnimationFrame(() => {
       findingRefs.current[f.id]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
@@ -153,7 +212,6 @@ export default function Home() {
   function selectLine(file: string, line: number) {
     const findings = lineIndex.get(file)?.get(line);
     if (!findings || findings.length === 0) return;
-    // Cycle through findings on the same line on repeated clicks.
     const currentIdx = findings.findIndex((f) => f.id === selectedFindingId);
     const next = findings[(currentIdx + 1) % findings.length];
     selectFinding(next);
@@ -166,6 +224,8 @@ export default function Home() {
     );
   }, [result]);
 
+  const allSkillOptions = [...PRESET_SKILLS, ...customSkills];
+
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -174,10 +234,9 @@ export default function Home() {
             Skill Scanner — Phase 1 (local, unprotected)
           </h1>
           <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            Scans a fixed set of local sample skills with Cisco&apos;s open-source Skill
-            Scanner. Click a finding to jump to it in the source, or click a highlighted
-            line to see why it was flagged. No uploads, no sandboxing yet — that&apos;s
-            phase 2.
+            Click a finding to jump to it in the source, or click a highlighted line to
+            see why it was flagged. Uploaded skills are written to a local temp folder
+            for this session only — no sandboxing yet, that&apos;s phase 2.
           </p>
         </div>
 
@@ -187,19 +246,33 @@ export default function Home() {
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
           >
-            {SAMPLE_SKILLS.map((s) => (
+            {allSkillOptions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
             ))}
           </select>
           <button
-            onClick={runScan}
+            onClick={() => runScan(selected)}
             disabled={loading}
             className="rounded bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
           >
             {loading ? "Scanning..." : "Scan"}
           </button>
+
+          <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              multiple
+              onChange={handleUpload}
+              disabled={uploading}
+              {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
+              className="text-xs text-zinc-600 file:mr-2 file:rounded file:border-0 file:bg-zinc-200 file:px-3 file:py-1.5 file:text-xs file:font-medium dark:text-zinc-400 dark:file:bg-zinc-800 dark:file:text-zinc-100"
+            />
+            {uploading && <span className="text-xs text-zinc-500">Uploading &amp; scanning...</span>}
+          </div>
+
           {result && (
             <div className="flex items-center gap-2">
               <span
@@ -210,13 +283,18 @@ export default function Home() {
                 {result.is_safe ? "SAFE" : "ISSUES FOUND"}
               </span>
               <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                {result.skill_name} — max severity {result.max_severity}, {result.findings_count}{" "}
+                {result.label} — max severity {result.max_severity}, {result.findings_count}{" "}
                 finding{result.findings_count === 1 ? "" : "s"}
               </span>
             </div>
           )}
         </div>
 
+        {uploadError && (
+          <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+            Upload failed: {uploadError}
+          </div>
+        )}
         {error && (
           <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
             {error}
@@ -225,84 +303,118 @@ export default function Home() {
 
         {result && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-            {/* Source panel */}
-            <div className="flex flex-col overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 lg:col-span-3">
-              <div className="flex gap-1 border-b border-zinc-200 bg-zinc-100 px-2 pt-2 dark:border-zinc-800 dark:bg-zinc-950">
-                {Object.keys(result.files).map((file) => {
-                  const issueCount =
-                    (lineIndex.get(file)?.size ?? 0) > 0 || (fileLevelFindings.get(file)?.length ?? 0) > 0
-                      ? [...(result.findings ?? [])].filter((f) => f.resolved_file === file).length
-                      : 0;
-                  return (
-                    <button
-                      key={file}
-                      onClick={() => setActiveFile(file)}
-                      className={`rounded-t px-3 py-2 text-xs font-mono ${
-                        activeFile === file
-                          ? "bg-white text-black dark:bg-zinc-900 dark:text-zinc-50"
-                          : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
-                      }`}
+            {/* Source panel: all files stacked in one continuous scroll, no tabs */}
+            <div className="flex flex-col gap-4 overflow-auto lg:col-span-3 lg:max-h-[calc(100vh-220px)]">
+              {Object.keys(result.files).map((file) => {
+                const issueCount = findingsPerFile.get(file) ?? 0;
+                const isEditing = editingFile === file;
+                return (
+                  <div
+                    key={file}
+                    className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+                  >
+                    <div
+                      ref={(el) => {
+                        fileHeaderRefs.current[file] = el;
+                      }}
+                      className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-100 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
                     >
-                      {file}
-                      {issueCount > 0 && (
-                        <span className="ml-1.5 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
-                          {issueCount}
-                        </span>
+                      <span className="font-mono text-xs font-semibold text-black dark:text-zinc-50">
+                        {file}
+                        {issueCount > 0 && (
+                          <span className="ml-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
+                            {issueCount} issue{issueCount === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </span>
+                      {isEditing ? (
+                        <div className="flex gap-2">
+                          <button
+                            onClick={saveEdit}
+                            className="rounded bg-black px-2 py-1 text-xs font-medium text-white dark:bg-zinc-50 dark:text-black"
+                          >
+                            Save &amp; rescan
+                          </button>
+                          <button
+                            onClick={() => setEditingFile(null)}
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setEditingFile(file);
+                            setEditBuffer(result.files[file]);
+                          }}
+                          className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
+                        >
+                          Edit
+                        </button>
                       )}
-                    </button>
-                  );
-                })}
-              </div>
+                    </div>
 
-              {activeFile && fileLevelFindings.get(activeFile) && (
-                <div className="flex flex-col gap-1 border-b border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
-                  {fileLevelFindings.get(activeFile)!.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => selectFinding(f)}
-                      className="flex items-center gap-2 text-left text-xs"
-                    >
-                      <span className={`rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
-                        {f.severity}
-                      </span>
-                      <span className="text-zinc-600 dark:text-zinc-400">
-                        {f.title} (file-level, no specific line)
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div className="overflow-auto font-mono text-xs leading-5">
-                {activeFile &&
-                  result.files[activeFile].split("\n").map((lineText, idx) => {
-                    const lineNum = idx + 1;
-                    const findingsOnLine = lineIndex.get(activeFile)?.get(lineNum) ?? [];
-                    const hasIssue = findingsOnLine.length > 0;
-                    const isSelected = findingsOnLine.some((f) => f.id === selectedFindingId);
-                    const bg = hasIssue ? SEVERITY_LINE_BG[worstSeverity(findingsOnLine)] : "";
-                    return (
-                      <div
-                        key={lineNum}
-                        ref={(el) => {
-                          if (isSelected) lineRefs.current[lineNum] = el;
-                        }}
-                        onClick={() => hasIssue && selectLine(activeFile, lineNum)}
-                        className={`flex px-2 ${bg} ${hasIssue ? "cursor-pointer" : ""} ${
-                          isSelected ? "ring-2 ring-inset ring-black dark:ring-white" : ""
-                        }`}
-                        title={hasIssue ? findingsOnLine.map((f) => f.title).join("; ") : undefined}
-                      >
-                        <span className="w-8 shrink-0 select-none text-right text-zinc-400">
-                          {lineNum}
-                        </span>
-                        <span className="ml-3 whitespace-pre-wrap text-black dark:text-zinc-100">
-                          {lineText || " "}
-                        </span>
+                    {fileLevelFindings.get(file) && (
+                      <div className="flex flex-col gap-1 p-2">
+                        {fileLevelFindings.get(file)!.map((f) => (
+                          <button
+                            key={f.id}
+                            onClick={() => selectFinding(f)}
+                            className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs ${SEVERITY_LINE_BG[f.severity]}`}
+                          >
+                            <span className={`rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
+                              {f.severity}
+                            </span>
+                            <span className="text-black dark:text-zinc-100">
+                              {f.title} — {f.description}
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                    );
-                  })}
-              </div>
+                    )}
+
+                    {isEditing ? (
+                      <textarea
+                        value={editBuffer}
+                        onChange={(e) => setEditBuffer(e.target.value)}
+                        className="h-80 w-full resize-y border-0 bg-white p-3 font-mono text-xs text-black outline-none dark:bg-zinc-900 dark:text-zinc-100"
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <div className="overflow-x-auto font-mono text-xs leading-5">
+                        {result.files[file].split("\n").map((lineText, idx) => {
+                          const lineNum = idx + 1;
+                          const findingsOnLine = lineIndex.get(file)?.get(lineNum) ?? [];
+                          const hasIssue = findingsOnLine.length > 0;
+                          const isSelected = findingsOnLine.some((f) => f.id === selectedFindingId);
+                          const bg = hasIssue ? SEVERITY_LINE_BG[worstSeverity(findingsOnLine)] : "";
+                          return (
+                            <div
+                              key={lineNum}
+                              ref={(el) => {
+                                lineRefs.current[lineKey(file, lineNum)] = el;
+                              }}
+                              onClick={() => hasIssue && selectLine(file, lineNum)}
+                              className={`flex px-2 ${bg} ${hasIssue ? "cursor-pointer" : ""} ${
+                                isSelected ? "ring-2 ring-inset ring-black dark:ring-white" : ""
+                              }`}
+                              title={hasIssue ? findingsOnLine.map((f) => f.title).join("; ") : undefined}
+                            >
+                              <span className="w-8 shrink-0 select-none text-right text-zinc-400">
+                                {lineNum}
+                              </span>
+                              <span className="ml-3 whitespace-pre-wrap text-black dark:text-zinc-100">
+                                {lineText || " "}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Findings panel */}
@@ -351,6 +463,19 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        <footer className="mt-4 border-t border-zinc-200 pt-4 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-500">
+          Powered by{" "}
+          <a
+            href="https://github.com/cisco-ai-defense/skill-scanner"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            Cisco&apos;s open-source Skill Scanner
+          </a>{" "}
+          (Apache-2.0).
+        </footer>
       </main>
     </div>
   );

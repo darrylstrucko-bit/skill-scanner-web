@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# uploaded skill packages (phase 1 local testing, not meant to persist)
+/.uploads
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
