@@ -397,7 +397,8 @@ export default function Home() {
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
         <div className="flex items-start gap-3">
-          <div className="mt-1 h-8 w-1.5 shrink-0 rounded-full bg-violet-700 dark:bg-violet-500" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/app-logo.svg" alt="Skill Scanner logo" className="mt-0.5 h-9 w-9 shrink-0" />
           <div>
             <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
               Skill Scanner

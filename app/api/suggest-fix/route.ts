@@ -2,7 +2,15 @@ import { NextResponse } from "next/server";
 
 export const maxDuration = 30;
 
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile is gone from Groq's catalog as of this writing — verified
+// directly against /v1/models. Tried openai/gpt-oss-120b (the largest general chat
+// model currently available) first, but it's a reasoning model: it spends tokens on
+// an internal "reasoning" field before the real answer, and intermittently (~1 in 3
+// in testing) exhausted the token budget mid-thought and returned empty content.
+// qwen/qwen3.8-27b answers directly with no reasoning overhead — consistently
+// correct and fast across repeated tests of this exact prompt, which matters more
+// here than raw model size for a single-line rewrite task.
+const GROQ_MODEL = "qwen/qwen3.8-27b";
 
 export async function POST(request: Request) {
   const apiKey = process.env.GROQ_API_KEY;
