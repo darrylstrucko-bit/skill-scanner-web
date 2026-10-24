@@ -188,33 +188,37 @@ export default function Home() {
   }
 
   async function handleScanClick() {
-    if (mode === "preset") {
-      setLoading(true);
-      setElapsedSeconds(0);
-      setError(null);
-      try {
-        const res = await fetch(`/api/seed/${selected}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to load seed skill");
-        setFiles(data.files);
-        await runScanOn(data.files);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setLoading(false);
-      }
-      return;
-    }
     if (files) await runScanOn(files);
   }
 
-  function handleSelectChange(id: string) {
+  // Fetches and displays a preset's content immediately on selection, rather than
+  // waiting for Scan — so there's actually something to look at when the UI calls
+  // it "selected." Presets are read-only (nothing ever writes back to them), so
+  // whatever we fetch here stays accurate until the user edits it, at which point
+  // saveEdit switches mode to "custom" anyway.
+  async function selectPreset(id: string) {
     setSelected(id);
     setMode("preset");
-    setFiles(null);
     setCustomLabel(null);
     setResult(null);
     setError(null);
+    setFiles(null);
+    try {
+      const res = await fetch(`/api/seed/${id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load seed skill");
+      setFiles(data.files);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
+
+  // Show something on first load instead of a blank page until the user acts.
+  // Deferred a tick so the effect body itself has no synchronous setState calls.
+  useEffect(() => {
+    const t = setTimeout(() => selectPreset(PRESET_SKILLS[0].id), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const fileList = e.target.files;
@@ -337,37 +341,41 @@ export default function Home() {
           <div className="mt-1 h-8 w-1.5 shrink-0 rounded-full bg-violet-700 dark:bg-violet-500" />
           <div>
             <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-              Skill Scanner — Phase 1
+              Skill Scanner
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Click a finding to jump to it in the source, or click a highlighted line to
-              see why it was flagged. Nothing you scan or edit is written to a server —
-              each scan sends the current file content fresh.
+              Choose a skill file and run it through the Skill Scanner to check for
+              malicious patterns to prevent prompt injection and data exfiltration.
+              Review findings and edit using this interface.
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <select
-            className={`rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors transition-opacity focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:border-violet-400 ${
-              mode === "custom" ? "opacity-50" : ""
-            }`}
-            value={selected}
-            onChange={(e) => handleSelectChange(e.target.value)}
-          >
+          <div className="flex items-center gap-2">
             {PRESET_SKILLS.map((s) => (
-              <option key={s.id} value={s.id}>
+              <button
+                key={s.id}
+                onClick={() => selectPreset(s.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  mode === "preset" && selected === s.id
+                    ? "bg-violet-700 text-white"
+                    : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
                 {s.label}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
+
           <button
             onClick={handleScanClick}
-            disabled={loading || isWarmingUp}
+            disabled={loading || isWarmingUp || !files}
             className="rounded bg-violet-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
           >
             {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
           </button>
+
           <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
             <input
               ref={uploadInputRef}
@@ -381,6 +389,13 @@ export default function Home() {
             {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
           </div>
 
+          {mode === "custom" && customLabel && (
+            <div className="flex items-center gap-1.5 rounded border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-800 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
+              <span className="text-violet-500 dark:text-violet-500">Selected:</span>
+              <span className="font-mono">{customLabel}</span>
+            </div>
+          )}
+
           {isWarmingUp && (
             <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
               Scanner is waking up from idle — {warmupElapsed}s so far (usually under a
@@ -392,13 +407,6 @@ export default function Home() {
               {isRemote && !warmConfirmed
                 ? "Taking a while — the scanner may still be waking up from idle (can take up to ~2 minutes in rare cases)."
                 : "Taking longer than usual — larger or more complex skills take more time to scan."}
-            </span>
-          )}
-
-          {mode === "custom" && customLabel && (
-            <span className="rounded bg-violet-100 px-2 py-1 text-xs font-medium text-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
-              Currently viewing: <span className="font-mono">{customLabel}</span>
-              {files && !result && " — click Scan to analyze"}
             </span>
           )}
 
@@ -430,7 +438,7 @@ export default function Home() {
           </div>
         )}
 
-        {result && (
+        {files && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             {/* Source panel: all files stacked in one continuous scroll, no tabs */}
             <div className="flex flex-col gap-4 overflow-auto lg:col-span-3 lg:max-h-[calc(100vh-220px)]">
@@ -456,32 +464,33 @@ export default function Home() {
                           </span>
                         )}
                       </span>
-                      {isEditing ? (
-                        <div className="flex gap-2">
+                      {result &&
+                        (isEditing ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={saveEdit}
+                              className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+                            >
+                              Save &amp; rescan
+                            </button>
+                            <button
+                              onClick={() => setEditingFile(null)}
+                              className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={saveEdit}
-                            className="rounded bg-violet-700 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
-                          >
-                            Save &amp; rescan
-                          </button>
-                          <button
-                            onClick={() => setEditingFile(null)}
+                            onClick={() => {
+                              setEditingFile(file);
+                              setEditsByLine({});
+                            }}
                             className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
                           >
-                            Cancel
+                            Edit
                           </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setEditingFile(file);
-                            setEditsByLine({});
-                          }}
-                          className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
-                        >
-                          Edit
-                        </button>
-                      )}
+                        ))}
                     </div>
 
                     {fileLevelFindings.get(file) && (
@@ -560,6 +569,12 @@ export default function Home() {
 
             {/* Findings panel */}
             <div className="flex flex-col gap-2 overflow-auto lg:col-span-2 lg:max-h-[calc(100vh-220px)]">
+              {!result && (
+                <div className="rounded border border-dashed border-zinc-300 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-500">
+                  Source loaded — click <span className="font-medium">Scan</span> to check
+                  it for issues.
+                </div>
+              )}
               {sortedFindings.map((f) => (
                 <div
                   key={f.id}
