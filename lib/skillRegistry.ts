@@ -39,3 +39,10 @@ export function skillFileOverride(skillId: string): string | null {
 export function isKnownSkill(skillId: string): boolean {
   return skillId in SAMPLE_SKILLS || uploadedSkills.has(skillId);
 }
+
+// The two seeded samples are fixtures other people rely on to see a known-good /
+// known-bad result — they must never be mutated by the Edit/Save flow. Anything
+// editable (including a "fork" of a seed) lives in the uploads map instead.
+export function isSeedSkill(skillId: string): boolean {
+  return skillId in SAMPLE_SKILLS;
+}

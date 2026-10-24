@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import { NextResponse } from "next/server";
-import { resolveSkillDir, isKnownSkill } from "@/lib/skillRegistry";
+import { resolveSkillDir, isKnownSkill, isSeedSkill } from "@/lib/skillRegistry";
 import { safeResolveWithin } from "@/lib/skillFiles";
 
 export async function POST(request: Request) {
@@ -14,6 +14,14 @@ export async function POST(request: Request) {
   }
   if (typeof file !== "string" || typeof content !== "string") {
     return NextResponse.json({ error: "Missing file or content." }, { status: 400 });
+  }
+  // Seed fixtures (benign-skill/malicious-skill) are never writable — callers must
+  // fork via /api/fork first and save into the resulting upload:<id> instead.
+  if (isSeedSkill(skillId)) {
+    return NextResponse.json(
+      { error: "Refused: seed skills are read-only. Fork it first via /api/fork." },
+      { status: 403 }
+    );
   }
 
   const skillDir = resolveSkillDir(skillId)!;

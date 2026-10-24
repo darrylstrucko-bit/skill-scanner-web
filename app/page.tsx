@@ -140,11 +140,31 @@ export default function Home() {
     const content = originalLines
       .map((lineText, idx) => editsByLine[idx + 1] ?? lineText)
       .join("\n");
+    const savedFile = editingFile;
     try {
+      // benign-skill / malicious-skill are committed fixtures — never write to
+      // them directly. First edit of a seed forks it into an editable working
+      // copy, which becomes the new selected skill for this and future edits.
+      let targetSkillId = selected;
+      if (PRESET_SKILLS.some((s) => s.id === selected)) {
+        const forkRes = await fetch("/api/fork", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skillId: selected }),
+        });
+        const forkData = await forkRes.json();
+        if (!forkRes.ok) {
+          throw new Error(forkData.detail || forkData.error || "Fork failed");
+        }
+        targetSkillId = forkData.skillId;
+        setCustomSkills((prev) => [...prev, { id: forkData.skillId, label: forkData.label }]);
+        setSelected(forkData.skillId);
+      }
+
       const res = await fetch("/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skillId: selected, file: editingFile, content }),
+        body: JSON.stringify({ skillId: targetSkillId, file: savedFile, content }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -153,11 +173,10 @@ export default function Home() {
       // Show the edit immediately instead of the stale pre-edit content while the
       // rescan is in flight — runScan clears editingFile right away, which would
       // otherwise flash the old (still-flagged) text back into the read-only view.
-      const savedFile = editingFile;
       setResult((prev) =>
         prev ? { ...prev, files: { ...prev.files, [savedFile]: content } } : prev
       );
-      await runScan(selected);
+      await runScan(targetSkillId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -243,6 +262,7 @@ export default function Home() {
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
         <div>
+          <div className="mb-3 h-1 w-16 rounded-full bg-violet-600 dark:bg-violet-500" />
           <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
             Skill Scanner — Phase 1 (local, unprotected)
           </h1>
@@ -255,7 +275,7 @@ export default function Home() {
 
         <div className="flex flex-wrap items-center gap-3">
           <select
-            className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:border-violet-400"
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
           >
@@ -268,7 +288,7 @@ export default function Home() {
           <button
             onClick={() => runScan(selected)}
             disabled={loading}
-            className="rounded bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 active:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200 dark:active:bg-zinc-300"
+            className="rounded bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
           >
             {loading ? "Scanning..." : "Scan"}
           </button>
@@ -330,7 +350,7 @@ export default function Home() {
                       ref={(el) => {
                         fileHeaderRefs.current[file] = el;
                       }}
-                      className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-100 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
+                      className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/40"
                     >
                       <span className="font-mono text-xs font-semibold text-black dark:text-zinc-50">
                         {file}
@@ -344,13 +364,13 @@ export default function Home() {
                         <div className="flex gap-2">
                           <button
                             onClick={saveEdit}
-                            className="rounded bg-black px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-zinc-800 active:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200 dark:active:bg-zinc-300"
+                            className="rounded bg-violet-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
                           >
                             Save &amp; rescan
                           </button>
                           <button
                             onClick={() => setEditingFile(null)}
-                            className="rounded border border-zinc-300 px-2 py-1 text-xs transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
+                            className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
                           >
                             Cancel
                           </button>
@@ -361,7 +381,7 @@ export default function Home() {
                             setEditingFile(file);
                             setEditsByLine({});
                           }}
-                          className="rounded border border-zinc-300 px-2 py-1 text-xs transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800 dark:active:bg-zinc-700"
+                          className="rounded border border-violet-300 px-2 py-1 text-xs transition-colors hover:bg-violet-50 active:bg-violet-100 dark:border-violet-800 dark:hover:bg-violet-950/40 dark:active:bg-violet-900/40"
                         >
                           Edit
                         </button>
@@ -376,7 +396,7 @@ export default function Home() {
                             onClick={() => selectFinding(f)}
                             className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:brightness-95 active:brightness-90 dark:hover:brightness-110 dark:active:brightness-125 ${
                               SEVERITY_LINE_BG[f.severity]
-                            } ${selectedFindingId === f.id ? "ring-2 ring-inset ring-black dark:ring-white" : ""}`}
+                            } ${selectedFindingId === f.id ? "ring-2 ring-inset ring-violet-500 dark:ring-violet-400" : ""}`}
                           >
                             <span className={`rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
                               {f.severity}
@@ -395,7 +415,7 @@ export default function Home() {
                         this view.
                       </p>
                     )}
-                    <div className="overflow-x-auto font-mono text-xs leading-5">
+                    <div className="font-mono text-xs leading-5">
                       {result.files[file].split("\n").map((lineText, idx) => {
                         const lineNum = idx + 1;
                         const findingsOnLine = lineIndex.get(file)?.get(lineNum) ?? [];
@@ -411,7 +431,7 @@ export default function Home() {
                             }}
                             onClick={() => !isEditing && hasIssue && selectLine(file, lineNum)}
                             className={`flex px-2 ${bg} ${hasIssue && !isEditing ? "cursor-pointer" : ""} ${
-                              isSelected ? "ring-2 ring-inset ring-black dark:ring-white" : ""
+                              isSelected ? "ring-2 ring-inset ring-violet-500 dark:ring-violet-400" : ""
                             }`}
                             title={hasIssue ? findingsOnLine.map((f) => f.title).join("; ") : undefined}
                           >
@@ -453,7 +473,7 @@ export default function Home() {
                   onClick={() => selectFinding(f)}
                   className={`cursor-pointer rounded border bg-white p-4 transition-colors hover:bg-zinc-50 active:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:active:bg-zinc-700 ${
                     selectedFindingId === f.id
-                      ? "border-black dark:border-white"
+                      ? "border-violet-500 dark:border-violet-400"
                       : "border-zinc-200 dark:border-zinc-800"
                   }`}
                 >
@@ -508,7 +528,7 @@ export default function Home() {
             href="https://github.com/cisco-ai-defense/skill-scanner"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+            className="text-violet-600 underline hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300"
           >
             Cisco&apos;s open-source Skill Scanner
           </a>{" "}

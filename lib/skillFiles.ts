@@ -104,4 +104,22 @@ export function inferLineFromFlow(
   return null;
 }
 
+// Recursively copies every file/dir from src into dest, skipping the same
+// clutter directories readSkillFiles ignores. Used to fork a seed skill into an
+// editable working copy before any write.
+export async function copyDirRecursive(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirRecursive(s, d);
+    } else {
+      await fs.copyFile(s, d);
+    }
+  }
+}
+
 export { TEXT_EXTENSIONS };
