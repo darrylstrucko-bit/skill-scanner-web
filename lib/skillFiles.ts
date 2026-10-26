@@ -32,6 +32,56 @@ export function correctLineForSnippet(
   );
 }
 
+// Extracts the parts of an LLM analyzer's narrative `snippet` that it quoted
+// verbatim (backticks for code, single quotes for prose it's describing) —
+// longest first, since a longer quote is more likely to be unique and accurate.
+// Short quotes (<10 chars) are dropped: too likely to match unrelated text.
+function extractQuotedFragments(snippet: string): string[] {
+  const fragments: string[] = [];
+  const backtickRe = /`([^`]+)`/g;
+  const singleQuoteRe = /'([^']{10,})'/g;
+  let m: RegExpExecArray | null;
+  while ((m = backtickRe.exec(snippet))) fragments.push(m[1]);
+  while ((m = singleQuoteRe.exec(snippet))) fragments.push(m[1]);
+  return fragments
+    .map((f) => f.replace(/\s+/g, " ").trim())
+    .filter((f) => f.length >= 10)
+    .sort((a, b) => b.length - a.length);
+}
+
+// The LLM semantic/behavioral analyzer describes a finding in its own paraphrased
+// narrative rather than quoting one line of matched text, so `correctLineForSnippet`
+// (a single-line substring check) never matches it — these findings would otherwise
+// stay file-level forever. But the narrative usually quotes the actual offending
+// text verbatim somewhere inside it. Flatten the file's lines (joining with a single
+// space in place of each newline) so a quote that happens to span a line wrap in the
+// source still resolves, then look for each quoted fragment there.
+export function findLineForQuotedFragment(content: string, snippet: string | null | undefined): number | null {
+  if (!snippet) return null;
+  const fragments = extractQuotedFragments(snippet);
+  if (fragments.length === 0) return null;
+
+  const lines = content.split("\n");
+  const lineStartOffsets: number[] = [];
+  let flat = "";
+  for (const line of lines) {
+    lineStartOffsets.push(flat.length);
+    flat += line + " ";
+  }
+
+  for (const fragment of fragments) {
+    const idx = flat.indexOf(fragment);
+    if (idx === -1) continue;
+    let line = 0;
+    for (let i = 0; i < lineStartOffsets.length; i++) {
+      if (lineStartOffsets[i] <= idx) line = i;
+      else break;
+    }
+    return line + 1;
+  }
+  return null;
+}
+
 // Matches common network library imports/calls, used to pin a line for findings
 // whose location the scanner only knows at the file level (e.g. "undeclared
 // network usage"). Deliberately scoped to network signatures only — this isn't a

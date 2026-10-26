@@ -421,6 +421,12 @@ export default function Home() {
   const recentlyWarm =
     lastKnownWarmAt != null && Date.now() - lastKnownWarmAt < 10 * 60 * 1000;
 
+  // A scan that's running but can't yet be trusted as "actually scanning" — the
+  // server might still just be finishing its wake-up. Reflected on the Scan
+  // button itself (not just the side message) so it never claims to be doing
+  // work it might not have started yet.
+  const isLikelyColdStart = loading && isRemote && !recentlyWarm;
+
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-8 font-sans dark:bg-black">
       <main className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -433,10 +439,11 @@ export default function Home() {
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
               Use the Skill Scanner Console to check your skill file to prevent
-              prompt injection, tool poisoning and data exfiltration. Cisco&apos;s
-              Skill Scanner uses a combination of static YARA signatures and
-              LLM-based semantic analysis to detect malicious patterns and
-              behaviors.
+              prompt injection, tool poisoning and data exfiltration.
+              <br />
+              Cisco&apos;s Skill Scanner uses a combination of static YARA
+              signatures and LLM-based semantic analysis to detect malicious
+              patterns and behaviors.
             </p>
           </div>
         </div>
@@ -464,9 +471,17 @@ export default function Home() {
           <button
             onClick={handleScanClick}
             disabled={loading || isWarmingUp || !files}
-            className="rounded bg-violet-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+            className={`rounded px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 ${
+              isLikelyColdStart
+                ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:active:bg-amber-300"
+                : "bg-violet-700 hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+            }`}
           >
-            {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
+            {isLikelyColdStart
+              ? `Waking server... ${elapsedSeconds}s`
+              : loading
+                ? `Scanning... ${elapsedSeconds}s`
+                : "Scan"}
           </button>
 
           <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
@@ -502,14 +517,14 @@ export default function Home() {
           )}
 
           {isWarmingUp && (
-            <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <span className="max-w-lg rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
               Server is starting up (not scanning yet) — {warmupElapsed}s so far, usually
               under a minute.
             </span>
           )}
           {loading && elapsedSeconds >= 8 && (
-            <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              {isRemote && !recentlyWarm
+            <span className="max-w-lg rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              {isLikelyColdStart
                 ? "Still going — most likely the server is still finishing its wake-up from idle, not the scan itself (can take up to ~2 minutes in rare cases)."
                 : "Still scanning — this skill is just taking longer (larger or more complex files take more time)."}
             </span>
@@ -560,7 +575,7 @@ export default function Home() {
         {files && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             {/* Source panel: all files stacked in one continuous scroll, no tabs */}
-            <div className="flex flex-col gap-4 overflow-auto lg:col-span-3 lg:max-h-[calc(100vh-220px)]">
+            <div className="flex flex-col gap-4 overflow-auto max-h-[calc(100vh-220px)] lg:col-span-3">
               {Object.keys(displayFiles).map((file) => {
                 const issueCount = findingsPerFile.get(file) ?? 0;
                 const isEditing = editingFile === file;
@@ -687,7 +702,7 @@ export default function Home() {
             </div>
 
             {/* Findings panel */}
-            <div className="flex flex-col gap-2 overflow-auto lg:col-span-2 lg:max-h-[calc(100vh-220px)]">
+            <div className="flex flex-col gap-2 overflow-auto max-h-[calc(100vh-220px)] lg:col-span-2">
               {!result && (
                 <div className="rounded border border-dashed border-zinc-300 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-500">
                   Source loaded — click <span className="font-medium">Scan</span> to check

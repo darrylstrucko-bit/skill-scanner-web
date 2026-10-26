@@ -4,7 +4,14 @@ import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
 import JSZip from "jszip";
-import { detectEntryFile, normalizeKey, correctLineForSnippet, inferLineFromFlow, NETWORK_LIBRARY_PATTERN } from "./skillFiles";
+import {
+  detectEntryFile,
+  normalizeKey,
+  correctLineForSnippet,
+  findLineForQuotedFragment,
+  inferLineFromFlow,
+  NETWORK_LIBRARY_PATTERN,
+} from "./skillFiles";
 
 // Stateless by design: the caller always sends the full current file set, and we
 // never write anything the caller can't see back in the response. No server-side
@@ -180,6 +187,23 @@ export async function scanFiles(files: Record<string, string>): Promise<ScanResp
 
     if (correctedLine != null) {
       return { ...f, resolved_file: resolvedFile, line_number: correctedLine, reported_line_number: reportedLine, line_inferred: false };
+    }
+
+    // The LLM semantic/behavioral analyzer describes a finding in its own
+    // paraphrased narrative rather than a single-line snippet, so the check
+    // above never matches it. Try pulling a verbatim quoted fragment out of
+    // that narrative before falling back to flow-based inference or leaving
+    // the finding file-level.
+    const quotedLine =
+      resolvedFile && files[resolvedFile] ? findLineForQuotedFragment(files[resolvedFile], f.snippet) : null;
+    if (quotedLine != null) {
+      return {
+        ...f,
+        resolved_file: resolvedFile,
+        line_number: quotedLine,
+        reported_line_number: reportedLine,
+        line_inferred: true,
+      };
     }
 
     const flow = f.metadata?.semantic_facts?.candidate_flow;
