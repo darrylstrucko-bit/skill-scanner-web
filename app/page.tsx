@@ -442,30 +442,6 @@ export default function Home() {
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            {PRESET_SKILLS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => selectPreset(s.id)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                  mode === "preset" && selected === s.id
-                    ? "bg-violet-700 text-white"
-                    : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={handleScanClick}
-            disabled={loading || isWarmingUp || !files}
-            className="rounded bg-violet-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
-          >
-            {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
-          </button>
-
-          <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
             <input
               ref={uploadInputRef}
               type="file"
@@ -477,6 +453,14 @@ export default function Home() {
             />
             {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
           </div>
+
+          <button
+            onClick={handleScanClick}
+            disabled={loading || isWarmingUp || !files}
+            className="rounded bg-violet-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-800 active:bg-violet-900 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+          >
+            {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
+          </button>
 
           {(files || result) && (
             <button
@@ -493,6 +477,22 @@ export default function Home() {
               <span className="font-mono">{customLabel}</span>
             </div>
           )}
+
+          <div className="ml-auto flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+            {PRESET_SKILLS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => selectPreset(s.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  mode === "preset" && selected === s.id
+                    ? "bg-violet-700 text-white"
+                    : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
 
           {isWarmingUp && (
             <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
