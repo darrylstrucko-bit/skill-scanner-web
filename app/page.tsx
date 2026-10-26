@@ -434,7 +434,7 @@ export default function Home() {
               Skill Scanner Console
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Use the Skill Scanner Console to check your skill file to prevent
+              Use the Skill Scanner Console to check your skill file for
               prompt injection, tool poisoning and data exfiltration.
               <br />
               Cisco&apos;s Skill Scanner uses a combination of static YARA
