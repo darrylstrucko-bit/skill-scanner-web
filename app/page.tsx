@@ -537,16 +537,21 @@ export default function Home() {
         )}
 
         {!files && (
-          <div className="flex flex-col items-center gap-4 rounded border border-dashed border-zinc-300 py-10 dark:border-zinc-700">
+          <div className="flex flex-col items-start gap-4">
             <p className="text-sm text-zinc-500 dark:text-zinc-500">
               Pick a preset chip or choose a file above to load it for scanning.
             </p>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/skill-scanner-arch2.png"
-              alt="Architecture diagram: the Vercel-hosted Next.js web app calls Render, which runs Cisco's open-source Skill Scanner, and Groq, which suggests fixes using Alibaba Qwen 3.8"
-              className="w-full max-w-xl"
-            />
+            <div>
+              <h2 className="mb-2 text-sm font-semibold text-black dark:text-zinc-50">
+                Skill Scanner Architecture
+              </h2>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/skill-scanner-arch2.png"
+                alt="Architecture diagram: the Vercel-hosted Next.js web app calls Render, which runs Cisco's open-source Skill Scanner, and Groq, which suggests fixes using Alibaba Qwen 3.8"
+                className="w-full max-w-[288px]"
+              />
+            </div>
           </div>
         )}
 
