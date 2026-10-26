@@ -91,16 +91,28 @@ async function scanRemote(files: Record<string, string>, apiUrl: string): Promis
 
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(zipBuffer)], { type: "application/zip" }), "skill.zip");
+  // Enables the scanner's own LLM-based semantic + behavioral-alignment analyzers
+  // (both off by default) on top of the always-on static/YARA pipeline. The
+  // Render service is configured with SKILL_SCANNER_LLM_PROVIDER=openai-compatible,
+  // pointed at Groq (qwen/qwen3.8-27b) via SKILL_SCANNER_LLM_MODEL/_BASE_URL/_API_KEY
+  // env vars — model/key/base URL are deliberately server-side only, not passed
+  // per-request here. If the LLM call fails for any reason, the scanner degrades
+  // gracefully (an LLM_ANALYSIS_FAILED info finding, static results unaffected)
+  // rather than failing the whole scan — verified directly against Render.
+  form.append("use_llm", "true");
+  form.append("use_behavioral", "true");
+  form.append("llm_provider", "openai-compatible");
 
   // Render's free tier spins a service down after 15 minutes idle and takes "about
   // a minute" to wake it back up (per Render's own docs) — but that's not a hard
-  // ceiling, and the actual scan still has to run after it wakes. 90s wasn't
-  // enough in practice; giving real margin above the documented estimate rather
-  // than cutting it close.
+  // ceiling, and the actual scan still has to run after it wakes. The LLM/behavioral
+  // analysis above adds real time on top of that (observed ~45-50s on a warm
+  // instance just for the LLM pass), so there's more margin here than the static-only
+  // baseline needed.
   const res = await fetch(`${apiUrl.replace(/\/$/, "")}/scan-upload`, {
     method: "POST",
     body: form,
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(180_000),
   });
   const text = await res.text();
   if (!res.ok) {
