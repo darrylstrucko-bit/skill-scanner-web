@@ -557,7 +557,7 @@ export default function Home() {
         {!files && (
           <div className="mt-12">
             <h2 className="mb-2 text-sm font-semibold text-black dark:text-zinc-50">
-              Skill Scanner Architecture
+              Skill Scanner Console Architecture
             </h2>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
