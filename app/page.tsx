@@ -112,60 +112,56 @@ export default function Home() {
   const findingRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Start waking the Render-hosted scanner as early as possible instead of
-  // waiting for the user's first Scan click, and keep checking until it's
-  // actually confirmed ready — not just "probably ready by now."
+  // Start waking the Render-hosted scanner as early as possible — on page
+  // load, not deferred until the user's first Scan click — by running an
+  // actual (trivial) scan through /api/warm, which exercises the same code
+  // path a real scan does. One long-running request rather than a poll loop:
+  // the warm-up itself now does the real work, so there's nothing to re-check
+  // every few seconds the way a cheap /health ping would need.
   useEffect(() => {
     let cancelled = false;
-    let pollTimer: ReturnType<typeof setTimeout>;
     const pingStartedAt = Date.now();
+    const tick = setInterval(() => {
+      if (!cancelled) setWarmupElapsed(Math.floor((Date.now() - pingStartedAt) / 1000));
+    }, 1000);
+
+    function stopGating() {
+      if (!cancelled) setWarmupState("warm");
+    }
 
     async function checkWarm() {
       try {
-        const res = await fetch("/api/warm");
+        const res = await fetch("/api/warm", { signal: AbortSignal.timeout(185_000) });
         const data = await res.json();
         if (cancelled) return;
-
         setIsRemote(Boolean(data.remote));
-
-        if (!data.remote || data.warmed) {
-          setWarmupState("warm");
-          // Deliberately NOT updating lastKnownWarmAt here: /api/warm only pings
-          // Render's lightweight /health route, which can respond before the
-          // scanner's actual scan endpoint has finished cold-starting (observed
-          // directly — /api/warm reported ready while a real scan still took
-          // 40+ seconds). Only a scan that actually completes is trustworthy
-          // evidence the full request path is warm.
-          return;
-        }
-
-        const elapsed = Math.floor((Date.now() - pingStartedAt) / 1000);
-        setWarmupElapsed(elapsed);
-        setWarmupState("cold");
-
-        // Give up waiting after a while and let them try anyway — the scan's own
-        // 120s timeout and elapsed-time indicator take over from there. Note this
-        // does NOT update lastKnownWarmAt — we're letting them proceed, not
-        // claiming we know it's actually ready.
-        if (elapsed < 90) {
-          pollTimer = setTimeout(checkWarm, 4000);
-        } else {
-          setWarmupState("warm");
-        }
+        stopGating();
+        if (data.remote && data.warmed) setLastKnownWarmAt(Date.now());
       } catch {
         // Can't tell — don't block on a guess, but don't claim confirmation either.
-        if (!cancelled) setWarmupState("warm");
+        stopGating();
+      } finally {
+        if (!cancelled) clearInterval(tick);
       }
     }
 
     checkWarm();
+
+    // Don't block the Scan button on the full warm-up request indefinitely —
+    // stop gating it after a reasonable wait even if that request is still
+    // running in the background. This only re-enables the button; it doesn't
+    // set lastKnownWarmAt, so the in-scan messaging still won't falsely claim
+    // confirmed-warm if the real request is in fact still going.
+    const giveUpTimer = setTimeout(stopGating, 75_000);
+
     return () => {
       cancelled = true;
-      clearTimeout(pollTimer);
+      clearInterval(tick);
+      clearTimeout(giveUpTimer);
     };
   }, []);
 
-  const isWarmingUp = warmupState === "cold";
+  const isWarmingUp = warmupState !== "warm";
 
   // Fallback for while a scan is actually in flight (covers both the cold-start
   // case below and any other reason a scan runs long) — a visible counter instead
@@ -449,7 +445,7 @@ export default function Home() {
         </div>
 
         {!files && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-500">
+          <p className="rounded border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
             Pick a preset chip or choose a file above to load it for scanning.
           </p>
         )}
@@ -518,8 +514,8 @@ export default function Home() {
 
           {isWarmingUp && (
             <span className="max-w-lg rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              Server is starting up (not scanning yet) — {warmupElapsed}s so far, usually
-              under a minute.
+              Server is starting up (not scanning yet) — {warmupElapsed}s so far, can
+              take a minute or two.
             </span>
           )}
           {loading && elapsedSeconds >= 8 && (
@@ -559,7 +555,7 @@ export default function Home() {
         )}
 
         {!files && (
-          <div>
+          <div className="mt-12">
             <h2 className="mb-2 text-sm font-semibold text-black dark:text-zinc-50">
               Skill Scanner Architecture
             </h2>
@@ -582,7 +578,7 @@ export default function Home() {
                 return (
                   <div
                     key={file}
-                    className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+                    className="shrink-0 overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
                   >
                     <div
                       ref={(el) => {
@@ -633,16 +629,15 @@ export default function Home() {
                           <button
                             key={f.id}
                             onClick={() => selectFinding(f)}
-                            className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:brightness-95 active:brightness-90 dark:hover:brightness-110 dark:active:brightness-125 ${
+                            title={`${f.title} — ${f.description}`}
+                            className={`flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors hover:brightness-95 active:brightness-90 dark:hover:brightness-110 dark:active:brightness-125 ${
                               SEVERITY_LINE_BG[f.severity]
                             } ${selectedFindingId === f.id ? "ring-2 ring-inset ring-violet-500 dark:ring-violet-400" : ""}`}
                           >
-                            <span className={`rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${SEVERITY_BADGE[f.severity]}`}>
                               {f.severity}
                             </span>
-                            <span className="text-black dark:text-zinc-100">
-                              {f.title} — {f.description}
-                            </span>
+                            <span className="truncate text-black dark:text-zinc-100">{f.title}</span>
                           </button>
                         ))}
                       </div>
@@ -702,7 +697,9 @@ export default function Home() {
             </div>
 
             {/* Findings panel */}
-            <div className="flex flex-col gap-2 overflow-auto max-h-[calc(100vh-220px)] lg:col-span-2">
+            <div className="flex flex-col gap-2 lg:col-span-2">
+              <h2 className="shrink-0 text-sm font-semibold text-black dark:text-zinc-50">Findings</h2>
+              <div className="flex flex-col gap-2 overflow-auto max-h-[calc(100vh-252px)]">
               {!result && (
                 <div className="rounded border border-dashed border-zinc-300 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-500">
                   Source loaded — click <span className="font-medium">Scan</span> to check
@@ -821,6 +818,7 @@ export default function Home() {
                   file shown above.
                 </div>
               )}
+              </div>
             </div>
           </div>
         )}
