@@ -429,16 +429,23 @@ export default function Home() {
           <img src="/app-logo.svg" alt="Skill Scanner logo" className="mt-0.5 h-9 w-9 shrink-0" />
           <div>
             <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-              Skill Scanner
+              Skill Scanner Console
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Choose a skill file and run it through the Skill Scanner to detect
-              malicious patterns and prevent prompt injection and data exfiltration.
-              <br />
-              Review findings and edit using this interface.
+              Use the Skill Scanner Console to check your skill file to prevent
+              prompt injection, tool poisoning and data exfiltration. Cisco&apos;s
+              Skill Scanner uses a combination of static YARA signatures and
+              LLM-based semantic analysis to detect malicious patterns and
+              behaviors.
             </p>
           </div>
         </div>
+
+        {!files && (
+          <p className="text-sm text-zinc-500 dark:text-zinc-500">
+            Pick a preset chip or choose a file above to load it for scanning.
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -462,6 +469,22 @@ export default function Home() {
             {loading ? `Scanning... ${elapsedSeconds}s` : "Scan"}
           </button>
 
+          <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+            {PRESET_SKILLS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => selectPreset(s.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  mode === "preset" && selected === s.id
+                    ? "bg-violet-700 text-white"
+                    : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           {(files || result) && (
             <button
               onClick={clearAll}
@@ -477,22 +500,6 @@ export default function Home() {
               <span className="font-mono">{customLabel}</span>
             </div>
           )}
-
-          <div className="ml-auto flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
-            {PRESET_SKILLS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => selectPreset(s.id)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                  mode === "preset" && selected === s.id
-                    ? "bg-violet-700 text-white"
-                    : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
 
           {isWarmingUp && (
             <span className="max-w-xs rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
@@ -537,21 +544,16 @@ export default function Home() {
         )}
 
         {!files && (
-          <div className="flex flex-col items-start gap-4">
-            <p className="text-sm text-zinc-500 dark:text-zinc-500">
-              Pick a preset chip or choose a file above to load it for scanning.
-            </p>
-            <div>
-              <h2 className="mb-2 text-sm font-semibold text-black dark:text-zinc-50">
-                Skill Scanner Architecture
-              </h2>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/skill-scanner-arch2.png"
-                alt="Architecture diagram: the Vercel-hosted Next.js web app calls Render, which runs Cisco's open-source Skill Scanner, and Groq, which suggests fixes using Alibaba Qwen 3.8"
-                className="w-full max-w-[288px]"
-              />
-            </div>
+          <div>
+            <h2 className="mb-2 text-sm font-semibold text-black dark:text-zinc-50">
+              Skill Scanner Architecture
+            </h2>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/skill-scanner-arch3.png"
+              alt="Architecture diagram: the Vercel-hosted Next.js web app calls Render, which runs Cisco's open-source Skill Scanner, and Groq, which suggests fixes using Alibaba Qwen 3.8"
+              className="w-full max-w-[432px]"
+            />
           </div>
         )}
 

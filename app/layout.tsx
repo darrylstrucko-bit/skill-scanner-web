@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Skill Scanner",
+  title: "Skill Scanner Console",
   description:
-    "Scan Claude Skills and OpenAI Codex skill files for prompt injection and data exfiltration, powered by Cisco's open-source Skill Scanner.",
+    "Use the Skill Scanner Console to check your skill file to prevent prompt injection, tool poisoning and data exfiltration. Cisco's Skill Scanner uses a combination of static YARA signatures and LLM-based semantic analysis to detect malicious patterns and behaviors.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

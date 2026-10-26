@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Skill Scanner",
+    name: "Skill Scanner Console",
     short_name: "Skill Scanner",
     description:
-      "Scan Claude Skills and OpenAI Codex skill files for prompt injection and data exfiltration.",
+      "Use the Skill Scanner Console to check your skill file to prevent prompt injection, tool poisoning and data exfiltration. Cisco's Skill Scanner uses a combination of static YARA signatures and LLM-based semantic analysis to detect malicious patterns and behaviors.",
     start_url: "/",
     display: "standalone",
     background_color: "#fafafa",
