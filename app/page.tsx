@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import JSZip from "jszip";
+import { ALLOWED_SKILL_EXTENSIONS, isAllowedSkillFile, stripCommonZipPrefix } from "@/lib/skillFiles";
 
 type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
 
@@ -111,6 +113,7 @@ export default function Home() {
   const fileHeaderRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const findingRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
 
   // Start waking the Render-hosted scanner as early as possible — on page
   // load, not deferred until the user's first Scan click — by running an
@@ -265,6 +268,58 @@ export default function Home() {
     } finally {
       setUploading(false);
       if (uploadInputRef.current) uploadInputRef.current.value = "";
+    }
+  }
+
+  const MAX_ZIP_ENTRIES = 1000;
+
+  // Separate from handleUpload because a zip needs real extraction (and its
+  // own filtering — `accept` only constrains the OS file-picker dialog, it
+  // does nothing to filter what's *inside* an uploaded zip, so every file
+  // type and any accidentally-included node_modules/.git/etc. would otherwise
+  // come through untouched).
+  async function handleZipUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const zipFile = fileList[0];
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
+      const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+      if (entries.length > MAX_ZIP_ENTRIES) {
+        throw new Error(
+          `This zip has ${entries.length} entries (max ${MAX_ZIP_ENTRIES}) — make sure it's just the skill's own folder, not a whole project.`
+        );
+      }
+
+      const kept = entries.filter((entry) => isAllowedSkillFile(entry.name));
+      if (kept.length === 0) {
+        throw new Error(
+          `No scannable files found in the zip (looked for ${ALLOWED_SKILL_EXTENSIONS.join(", ")}).`
+        );
+      }
+
+      const strippedPaths = stripCommonZipPrefix(kept.map((entry) => entry.name));
+      const fileEntries: [string, string][] = await Promise.all(
+        kept.map(async (entry, i) => [strippedPaths[i], await entry.async("string")] as [string, string])
+      );
+
+      const filesMap = Object.fromEntries(fileEntries);
+      setFiles(filesMap);
+      const skipped = entries.length - kept.length;
+      setCustomLabel(
+        `${zipFile.name} (${fileEntries.length} file${fileEntries.length === 1 ? "" : "s"}${
+          skipped > 0 ? `, ${skipped} skipped` : ""
+        })`
+      );
+      setMode("custom");
+      setResult(null);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+      if (zipInputRef.current) zipInputRef.current.value = "";
     }
   }
 
@@ -450,19 +505,35 @@ export default function Home() {
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-col gap-1">
             <input
               ref={uploadInputRef}
               type="file"
               multiple
-              accept=".md,.py,.js,.ts,.json,.yaml,.yml,.txt,.sh"
+              accept={ALLOWED_SKILL_EXTENSIONS.join(",")}
               onChange={handleUpload}
               disabled={uploading}
               className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
             />
-            {uploading && <span className="text-xs text-zinc-500">Reading files...</span>}
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">SKILL.md and/or related files</span>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <input
+              ref={zipInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              onChange={handleZipUpload}
+              disabled={uploading}
+              className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
+            />
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
+              Or zip your entire skill folder first, then upload the .zip
+            </span>
+          </div>
+
+          {uploading && <span className="self-center text-xs text-zinc-500">Reading...</span>}
 
           <button
             onClick={handleScanClick}

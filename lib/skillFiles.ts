@@ -121,3 +121,38 @@ export function detectEntryFile(files: Record<string, string>): string | undefin
   if (hasStandard) return undefined;
   return Object.keys(files).find((f) => f.toLowerCase().endsWith(".md"));
 }
+
+// Shared between the flat multi-file picker's `accept` attribute and the zip
+// upload's own filtering — a zip's entries aren't filtered by `accept` at all
+// (that only applies to the OS file-picker dialog), so this list has to be
+// enforced in JS for zip uploads to behave the same way.
+export const ALLOWED_SKILL_EXTENSIONS = [".md", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".txt", ".sh"];
+
+// Directory names that mean "not part of the skill" if they show up inside an
+// uploaded zip — someone zipping a whole project folder instead of just the
+// skill's own folder would otherwise drag in version control history,
+// installed dependencies, and build output.
+const NOISE_PATH_SEGMENTS = new Set(["node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build"]);
+
+export function isAllowedSkillFile(path: string): boolean {
+  const lower = path.toLowerCase();
+  if (lower.split("/").some((segment) => NOISE_PATH_SEGMENTS.has(segment))) return false;
+  if (lower.endsWith("/.ds_store")) return false;
+  return ALLOWED_SKILL_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+// Zips made by right-click-compress on a folder named "my-skill" wrap every
+// entry in a "my-skill/" prefix; zips made from inside the folder (e.g. `zip
+// -r out.zip .`) don't. Detect the wrapper and strip it so paths come out
+// looking like a real skill package root ("SKILL.md", not "my-skill/SKILL.md")
+// — only when every entry actually shares the same first segment, so a zip
+// that's already rooted correctly (or has multiple top-level files) is left
+// alone rather than having an unrelated prefix chopped off.
+export function stripCommonZipPrefix(paths: string[]): string[] {
+  if (paths.length === 0) return paths;
+  const segments = paths.map((p) => p.split("/"));
+  if (segments.some((s) => s.length < 2)) return paths;
+  const firstSegment = segments[0][0];
+  if (!segments.every((s) => s[0] === firstSegment)) return paths;
+  return paths.map((p) => p.slice(firstSegment.length + 1));
+}
