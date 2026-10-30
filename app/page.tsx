@@ -539,9 +539,9 @@ export default function Home() {
             <span className="text-[11px] text-zinc-500 dark:text-zinc-500">SKILL.md and/or related files</span>
           </div>
 
-          <span className="self-center text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-600">
-            Or
-          </span>
+          <div className="flex items-center self-stretch px-1">
+            <span className="text-sm font-bold text-black dark:text-white">OR</span>
+          </div>
 
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
