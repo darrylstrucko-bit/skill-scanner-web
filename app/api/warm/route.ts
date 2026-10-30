@@ -34,6 +34,7 @@ export async function GET() {
     form.append("use_llm", "true");
     form.append("use_behavioral", "true");
     form.append("llm_provider", "openai-compatible");
+    form.append("policy", "policies/groq-free-tier.yaml");
 
     const res = await fetch(`${apiUrl.replace(/\/$/, "")}/scan-upload`, {
       method: "POST",

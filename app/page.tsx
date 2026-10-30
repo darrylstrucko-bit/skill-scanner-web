@@ -465,6 +465,20 @@ export default function Home() {
     );
   }, [result]);
 
+  // LLM_CONTEXT_BUDGET_EXCEEDED: a file was excluded/trimmed to stay under
+  // Groq's free-tier token budget (expected, by design — see the trimmed
+  // policy in skill-scanner-api). LLM_ANALYSIS_FAILED: the LLM call itself
+  // errored (rate limit, timeout, etc.) and that layer didn't run at all for
+  // this scan. Either way, static/YARA findings are unaffected — only the
+  // LLM-based semantic/behavioral layer is impacted.
+  const llmLimitedFindings = useMemo(
+    () =>
+      result
+        ? result.findings.filter((f) => f.rule_id === "LLM_CONTEXT_BUDGET_EXCEEDED" || f.rule_id === "LLM_ANALYSIS_FAILED")
+        : [],
+    [result]
+  );
+
   const displayFiles = files ?? {};
 
   // Render spins down after ~15 min idle; trust a warm confirmation for 10 min
@@ -622,6 +636,16 @@ export default function Home() {
         {error && (
           <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
             {error}
+          </div>
+        )}
+
+        {llmLimitedFindings.length > 0 && (
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <span className="font-medium">LLM analysis was limited for part of this skill.</span>{" "}
+            This scanner runs its semantic/behavioral LLM layer on Groq&apos;s free tier, which caps
+            how much content can go into a single request — larger files can get skipped or only
+            partially reviewed by that layer (see the notes below for specifics). Static and
+            YARA-based detection still ran on the complete package either way.
           </div>
         )}
 

@@ -109,6 +109,11 @@ async function scanRemote(files: Record<string, string>, apiUrl: string): Promis
   form.append("use_llm", "true");
   form.append("use_behavioral", "true");
   form.append("llm_provider", "openai-compatible");
+  // Trims the scanner's default 100,000-char LLM prompt budget down to fit
+  // Groq's free-tier input-tokens-per-minute cap, which a real scan hit
+  // directly (RateLimitError: Limit 7000, Requested 8270). Requires
+  // SKILL_SCANNER_ALLOWED_ROOTS=. on Render — see that repo's README.
+  form.append("policy", "policies/groq-free-tier.yaml");
 
   // Render's free tier spins a service down after 15 minutes idle and takes "about
   // a minute" to wake it back up (per Render's own docs) — but that's not a hard
