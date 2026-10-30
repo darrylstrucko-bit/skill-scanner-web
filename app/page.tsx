@@ -75,6 +75,10 @@ export default function Home() {
   const [mode, setMode] = useState<Mode>("preset");
   const [files, setFiles] = useState<Record<string, string> | null>(null);
   const [customLabel, setCustomLabel] = useState<string | null>(null);
+  // Display-only — the zip input is visually hidden behind a custom-labeled
+  // button (native file inputs can't be given custom button text), so this
+  // replaces the "No file chosen" text the browser would otherwise show.
+  const [zipFileName, setZipFileName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -240,6 +244,7 @@ export default function Home() {
     setError(null);
     setUploadError(null);
     setCustomLabel(null);
+    setZipFileName(null);
     setMode("preset");
     setSelectedFindingId(null);
     setEditingFile(null);
@@ -284,6 +289,7 @@ export default function Home() {
     const zipFile = fileList[0];
     setUploading(true);
     setUploadError(null);
+    setZipFileName(zipFile.name);
     try {
       const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
       const entries = Object.values(zip.files).filter((entry) => !entry.dir);
@@ -533,17 +539,33 @@ export default function Home() {
             <span className="text-[11px] text-zinc-500 dark:text-zinc-500">SKILL.md and/or related files</span>
           </div>
 
+          <span className="self-center text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-600">
+            Or
+          </span>
+
           <div className="flex flex-col gap-1">
-            <input
-              ref={zipInputRef}
-              type="file"
-              accept=".zip,application/zip"
-              onChange={handleZipUpload}
-              disabled={uploading}
-              className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
-            />
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="zip-upload-input"
+                className={`rounded border border-zinc-400 bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:active:bg-zinc-700 ${
+                  uploading ? "pointer-events-none opacity-50" : "cursor-pointer"
+                }`}
+              >
+                Choose Zip File
+              </label>
+              <input
+                id="zip-upload-input"
+                ref={zipInputRef}
+                type="file"
+                accept=".zip,application/zip"
+                onChange={handleZipUpload}
+                disabled={uploading}
+                className="hidden"
+              />
+              <span className="text-xs text-zinc-700 dark:text-zinc-300">{zipFileName ?? "No file chosen"}</span>
+            </div>
             <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
-              Or zip your entire skill folder first, then upload the .zip
+              Zip your entire skill folder first, then choose the .zip here
             </span>
           </div>
 
