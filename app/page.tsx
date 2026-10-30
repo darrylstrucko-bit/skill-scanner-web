@@ -75,9 +75,12 @@ export default function Home() {
   const [mode, setMode] = useState<Mode>("preset");
   const [files, setFiles] = useState<Record<string, string> | null>(null);
   const [customLabel, setCustomLabel] = useState<string | null>(null);
-  // Display-only — the zip input is visually hidden behind a custom-labeled
-  // button (native file inputs can't be given custom button text), so this
-  // replaces the "No file chosen" text the browser would otherwise show.
+  // Display-only — both the multi-file and zip inputs are visually hidden
+  // behind custom-labeled buttons (native file inputs can't be given custom
+  // button text, and their native rendered width is unpredictable across
+  // browsers), so these replace the "No file chosen" text the browser would
+  // otherwise show.
+  const [chosenFilesLabel, setChosenFilesLabel] = useState<string | null>(null);
   const [zipFileName, setZipFileName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -244,6 +247,7 @@ export default function Home() {
     setError(null);
     setUploadError(null);
     setCustomLabel(null);
+    setChosenFilesLabel(null);
     setZipFileName(null);
     setMode("preset");
     setSelectedFindingId(null);
@@ -257,6 +261,7 @@ export default function Home() {
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
     setUploadError(null);
+    setChosenFilesLabel(fileList.length === 1 ? fileList[0].name : `${fileList.length} files`);
     try {
       const entries: [string, string][] = [];
       for (const file of Array.from(fileList)) {
@@ -525,25 +530,32 @@ export default function Home() {
           </p>
         )}
 
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="flex flex-col gap-1">
-            <input
-              ref={uploadInputRef}
-              type="file"
-              multiple
-              accept={ALLOWED_SKILL_EXTENSIONS.join(",")}
-              onChange={handleUpload}
-              disabled={uploading}
-              className="text-xs text-zinc-700 file:mr-2 file:cursor-pointer file:rounded file:border file:border-zinc-400 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black file:transition-colors hover:file:bg-zinc-100 active:file:bg-zinc-200 disabled:opacity-50 dark:text-zinc-300 dark:file:border-zinc-600 dark:file:bg-zinc-900 dark:file:text-zinc-100 dark:hover:file:bg-zinc-800 dark:active:file:bg-zinc-700"
-            />
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">SKILL.md and/or related files</span>
-          </div>
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="files-upload-input"
+                className={`rounded border border-zinc-400 bg-white px-3 py-1.5 text-xs font-medium text-black transition-colors hover:bg-zinc-100 active:bg-zinc-200 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:active:bg-zinc-700 ${
+                  uploading ? "pointer-events-none opacity-50" : "cursor-pointer"
+                }`}
+              >
+                Choose Files
+              </label>
+              <input
+                id="files-upload-input"
+                ref={uploadInputRef}
+                type="file"
+                multiple
+                accept={ALLOWED_SKILL_EXTENSIONS.join(",")}
+                onChange={handleUpload}
+                disabled={uploading}
+                className="hidden"
+              />
+              <span className="text-xs text-zinc-700 dark:text-zinc-300">{chosenFilesLabel ?? "No file chosen"}</span>
+            </div>
 
-          <div className="flex items-center self-stretch px-1">
             <span className="text-sm font-bold text-black dark:text-white">OR</span>
-          </div>
 
-          <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <label
                 htmlFor="zip-upload-input"
@@ -564,28 +576,24 @@ export default function Home() {
               />
               <span className="text-xs text-zinc-700 dark:text-zinc-300">{zipFileName ?? "No file chosen"}</span>
             </div>
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
-              Zip your entire skill folder first, then choose the .zip here
-            </span>
-          </div>
 
-          {uploading && <span className="self-center text-xs text-zinc-500">Reading...</span>}
+            {uploading && <span className="text-xs text-zinc-500">Reading...</span>}
 
-          <button
-            onClick={handleScanClick}
-            disabled={loading || isWarmingUp || !files}
-            className={`rounded px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 ${
-              isLikelyColdStart
-                ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:active:bg-amber-300"
-                : "bg-violet-700 hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
-            }`}
-          >
-            {isLikelyColdStart
-              ? `Waking server... ${elapsedSeconds}s`
-              : loading
-                ? `Scanning... ${elapsedSeconds}s`
-                : "Scan"}
-          </button>
+            <button
+              onClick={handleScanClick}
+              disabled={loading || isWarmingUp || !files}
+              className={`rounded px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 ${
+                isLikelyColdStart
+                  ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 dark:bg-amber-500 dark:hover:bg-amber-400 dark:active:bg-amber-300"
+                  : "bg-violet-700 hover:bg-violet-800 active:bg-violet-900 dark:bg-violet-500 dark:hover:bg-violet-400 dark:active:bg-violet-300"
+              }`}
+            >
+              {isLikelyColdStart
+                ? `Waking server... ${elapsedSeconds}s`
+                : loading
+                  ? `Scanning... ${elapsedSeconds}s`
+                  : "Scan"}
+            </button>
 
           <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
             {PRESET_SKILLS.map((s) => (
@@ -648,6 +656,14 @@ export default function Home() {
               </span>
             </div>
           )}
+          </div>
+
+          <div className="flex flex-wrap gap-4">
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">SKILL.md and/or related files</span>
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
+              Zip your entire skill folder first, then choose the .zip here
+            </span>
+          </div>
         </div>
 
         {uploadError && (
